@@ -101,15 +101,25 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
           <label for="password">Wachtwoord</label>
           <input id="password" type="password" placeholder="Jouw wifi wachtwoord">
         </div>
-        <div>
-          <label for="otaPassword">OTA wachtwoord</label>
-          <input id="otaPassword" type="text" placeholder="OTA wachtwoord voor uploads">
-        </div>
       </div>
       <div class="toolbar" style="margin-top:10px;">
         <button id="btnWifiSave" class="primary">Opslaan en verbinden</button>
       </div>
       <div id="wifiStatus" class="status">Nog niet geladen</div>
+    </section>
+
+    <section class="card">
+      <h2>OTA wachtwoord</h2>
+      <div class="row">
+        <div>
+          <label for="otaPassword">Wachtwoord voor over-the-air updates</label>
+          <input id="otaPassword" type="text" placeholder="OTA wachtwoord">
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button id="btnOtaSave" class="primary">OTA wachtwoord opslaan</button>
+      </div>
+      <div id="otaStatus" class="status"></div>
     </section>
 
     <section class="card">
@@ -134,6 +144,42 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       <h2>Live status</h2>
       <div id="live" class="mono">laden...</div>
     </section>
+
+    <section class="card">
+      <h2>Tijdzone</h2>
+      <div class="row">
+        <div>
+          <label for="timezone">Tijdzone</label>
+          <select id="timezone" style="width:100%;border-radius:10px;border:1px solid #c4d4ca;padding:10px;font-size:1rem;">
+            <option value="CET-1CEST,M3.5.0/2,M10.5.0/3">Europa/Amsterdam</option>
+            <option value="GMT0BST,M3.5.0/1,M10.5.0">Europa/Londen</option>
+            <option value="CET-1CEST,M3.5.0,M10.5.0/3">Europa/Berlijn</option>
+            <option value="CET-1CEST,M3.5.0,M10.5.0/3">Europa/Parijs</option>
+            <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Europa/Helsinki</option>
+            <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Europa/Athene</option>
+            <option value="EST5EDT,M3.2.0,M11.1.0">Amerika/New York</option>
+            <option value="CST6CDT,M3.2.0,M11.1.0">Amerika/Chicago</option>
+            <option value="MST7MDT,M3.2.0,M11.1.0">Amerika/Denver</option>
+            <option value="PST8PDT,M3.2.0,M11.1.0">Amerika/Los Angeles</option>
+            <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">Australi&euml;/Sydney</option>
+            <option value="JST-9">Azi&euml;/Tokyo</option>
+            <option value="GMT0">UTC</option>
+          </select>
+        </div>
+      </div>
+      <div id="tzStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+      <div class="sub">Kies een kleur per kanaal voor de curvegrafieken.</div>
+      <div class="row" style="margin-top:10px;">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;" id="colorPickers"></div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button id="btnColorSave" class="primary">Kleuren opslaan</button>
+      </div>
+      <div id="colorStatus" class="status"></div>
+    </section>
   </div>
 
 <script>
@@ -148,7 +194,14 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     btnTimeSet: document.getElementById("btnTimeSet"),
     wifiStatus: document.getElementById("wifiStatus"),
     timeStatus: document.getElementById("timeStatus"),
-    live: document.getElementById("live")
+    live: document.getElementById("live"),
+    colorPickers: document.getElementById("colorPickers"),
+    btnColorSave: document.getElementById("btnColorSave"),
+    colorStatus: document.getElementById("colorStatus"),
+    timezone: document.getElementById("timezone"),
+    tzStatus: document.getElementById("tzStatus"),
+    btnOtaSave: document.getElementById("btnOtaSave"),
+    otaStatus: document.getElementById("otaStatus")
   };
 
   const Api = {
@@ -165,17 +218,58 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     },
     state() { return this.call("/api/state"); },
     saveWifi(payload) { return this.call("/api/wifi/save", "POST", payload); },
-    setTime(payload) { return this.call("/api/time/set", "POST", payload); }
+    saveOta(payload) { return this.call("/api/ota/save", "POST", payload); },
+    setTime(payload) { return this.call("/api/time/set", "POST", payload); },
+    saveColors(payload) { return this.call("/api/colors/save", "POST", payload); }
   };
+
+  const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
+  let channelColors = [...defaultColors];
+
+  function buildColorPickers() {
+    el.colorPickers.innerHTML = "";
+    for (let i = 0; i < 5; i++) {
+      const label = document.createElement("label");
+      label.style.display = "flex";
+      label.style.alignItems = "center";
+      label.style.gap = "6px";
+      label.textContent = "Kanaal " + (i + 1) + " ";
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = channelColors[i];
+      input.dataset.ch = i;
+      input.style.width = "48px";
+      input.style.height = "36px";
+      input.style.padding = "2px";
+      input.style.cursor = "pointer";
+      label.appendChild(input);
+      el.colorPickers.appendChild(label);
+    }
+  }
 
   function setStatus(target, text, kind = "") {
     target.textContent = text;
     target.className = "status" + (kind ? " " + kind : "");
   }
 
+  let colorsLoaded = false;
   function renderState(s) {
     if (s.ssid) el.ssid.value = s.ssid;
     if (typeof s.otaPassword === "string") el.otaPassword.value = s.otaPassword;
+    if (s.timezone) {
+      const opts = el.timezone.options;
+      let found = false;
+      for (let i = 0; i < opts.length; i++) {
+        if (opts[i].value === s.timezone) { el.timezone.selectedIndex = i; found = true; break; }
+      }
+      if (!found) el.timezone.selectedIndex = 0;
+    }
+    if (!colorsLoaded && Array.isArray(s.channelColors) && s.channelColors.length === 5) {
+      colorsLoaded = true;
+      channelColors = [...s.channelColors];
+      const inputs = el.colorPickers.querySelectorAll("input[type=color]");
+      inputs.forEach((inp, i) => { inp.value = channelColors[i]; });
+    }
     const hh = Math.floor((s.nowMinute || 0) / 60);
     const mm = Math.floor((s.nowMinute || 0) % 60);
     el.live.textContent =
@@ -201,13 +295,21 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     try {
       const out = await Api.saveWifi({
         ssid: el.ssid.value.trim(),
-        password: el.password.value,
-        otaPassword: el.otaPassword.value
+        password: el.password.value
       });
       setStatus(el.wifiStatus, out.connected ? "Verbonden met wifi" : "Niet verbonden, AP mode actief", out.connected ? "ok" : "");
       await refresh();
     } catch (e) {
       setStatus(el.wifiStatus, "Opslaan mislukt: " + e.message, "err");
+    }
+  }
+
+  async function saveOta() {
+    try {
+      await Api.saveOta({ otaPassword: el.otaPassword.value.trim() });
+      setStatus(el.otaStatus, "OTA wachtwoord opgeslagen", "ok");
+    } catch (e) {
+      setStatus(el.otaStatus, "Opslaan mislukt: " + e.message, "err");
     }
   }
 
@@ -223,12 +325,39 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     }
   }
 
+  async function saveColors() {
+    try {
+      const inputs = el.colorPickers.querySelectorAll("input[type=color]");
+      const colors = Array.from(inputs).map(inp => inp.value);
+      await Api.saveColors({ channelColors: colors });
+      channelColors = [...colors];
+      colorsLoaded = false;
+      setStatus(el.colorStatus, "Kleuren opgeslagen", "ok");
+    } catch (e) {
+      setStatus(el.colorStatus, "Opslaan mislukt: " + e.message, "err");
+    }
+  }
+
   function bind() {
     el.btnWifiSave.onclick = saveWifi;
+    el.btnOtaSave.onclick = saveOta;
     el.btnTimeSet.onclick = setTime;
+    el.btnColorSave.onclick = saveColors;
+    el.timezone.onchange = async () => {
+      try {
+        await Api.saveWifi({
+          ssid: el.ssid.value.trim(),
+          timezone: el.timezone.value
+        });
+        setStatus(el.tzStatus, "Tijdzone opgeslagen", "ok");
+      } catch (e) {
+        setStatus(el.tzStatus, "Opslaan mislukt: " + e.message, "err");
+      }
+    };
   }
 
   async function boot() {
+    buildColorPickers();
     bind();
     await refresh();
     setInterval(async () => {

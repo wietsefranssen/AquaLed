@@ -30,7 +30,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <a href="/settings">Naar instellingen</a>
     </div>
     <h2>AquaLed Dagcurve Controller</h2>
-    <div>Curve is smooth. Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
+    <div>Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
   </div>
 
   <div class="card toolbar">
@@ -58,6 +58,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <span id="simState" class="small">Uit</span>
   </div>
 
+  <div class="card toolbar">
+    <strong>Tijdlijn preview</strong>
+    <input type="range" id="previewSlider" min="0" max="1439" value="0" style="flex:1;min-width:120px;">
+    <span id="previewTime" class="small" style="min-width:44px;">--:--</span>
+    <button id="btnPreviewReset" style="display:none;">Continueer programma</button>
+  </div>
+
   <div class="layout">
     <div class="card"><div id="channels" class="channels"></div></div>
     <div class="card"><h3>Live info</h3><pre id="live">laden...</pre></div>
@@ -77,12 +84,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     dateTime: "-",
     simulationActive: false,
     simulationDaySeconds: 120,
+    previewMinute: null,
     working: null,
     dragging: null,
-    canvases: []
+    canvases: [],
+    colors: ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"]
   };
-
-  const colors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
 
   const el = {
     presetSelect: document.getElementById("presetSelect"),
@@ -95,7 +102,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     simSeconds: document.getElementById("simSeconds"),
     btnSimStart: document.getElementById("btnSimStart"),
     btnSimStop: document.getElementById("btnSimStop"),
-    simState: document.getElementById("simState")
+    simState: document.getElementById("simState"),
+    previewSlider: document.getElementById("previewSlider"),
+    previewTime: document.getElementById("previewTime"),
+    btnPreviewReset: document.getElementById("btnPreviewReset")
   };
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -219,7 +229,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     ctx.clearRect(0,0,w,h);
     drawAxes(ctx, w, h);
 
-    ctx.strokeStyle = colors[idx % colors.length];
+    ctx.strokeStyle = state.colors[idx % state.colors.length];
     ctx.lineWidth = 2;
     ctx.beginPath();
     const samples = 180;
@@ -238,13 +248,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       const y = valueToY(p.value, h);
       ctx.beginPath();
       ctx.fillStyle = "#fff";
-      ctx.strokeStyle = colors[idx % colors.length];
+      ctx.strokeStyle = state.colors[idx % state.colors.length];
       ctx.arc(x, y, 4.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     });
 
-    const nowX = minuteToX(state.nowMinute, w);
+    const nowX = minuteToX(state.previewMinute !== null ? state.previewMinute : state.nowMinute, w);
     ctx.strokeStyle = "#24362b";
     ctx.beginPath();
     ctx.moveTo(nowX, 0);
@@ -254,17 +264,33 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
   function render() {
     for (let i = 0; i < CHANNELS; i++) draw(i);
-    const hh = Math.floor(state.nowMinute / 60);
-    const mm = Math.floor(state.nowMinute % 60);
+    const displayMin = state.previewMinute !== null ? state.previewMinute : state.nowMinute;
+    const hh = Math.floor(displayMin / 60);
+    const mm = Math.floor(displayMin % 60);
     el.live.textContent =
       "Preset: " + (state.presets[state.activePreset]?.name || "-") + "\n" +
       "Datum/tijd: " + (state.dateTime || "-") + "\n" +
       "Tijd (minuut): " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
       "Simulatie: " + (state.simulationActive ? ("aan (1 dag / " + state.simulationDaySeconds + "s)") : "uit") + "\n" +
-      "Outputs: " + state.outputs.join(", ");
+      "Outputs: " + state.outputs.map((v, i) => "ch" + (i+1) + "=" + v).join(", ") +
+      (state.previewMinute !== null ? "\nPreview: aan" : "");
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
+
+    if (state.previewMinute !== null) {
+      const ph = Math.floor(state.previewMinute / 60);
+      const pm = Math.floor(state.previewMinute % 60);
+      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
+      el.previewSlider.value = state.previewMinute;
+      el.btnPreviewReset.style.display = "";
+    } else {
+      el.previewSlider.value = Math.round(state.nowMinute);
+      const ph = Math.floor(state.nowMinute / 60);
+      const pm = Math.floor(state.nowMinute % 60);
+      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
+      el.btnPreviewReset.style.display = "none";
+    }
   }
 
   function nearest(points, x, y, w, h) {
@@ -355,6 +381,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.dateTime = s.dateTime || "-";
     state.simulationActive = !!s.simulationActive;
     state.simulationDaySeconds = Number(s.simulationDaySeconds || 120);
+    if (s.previewActive) state.previewMinute = s.nowMinute;
+    else state.previewMinute = null;
+    if (Array.isArray(s.channelColors) && s.channelColors.length === CHANNELS)
+      state.colors = s.channelColors;
   }
 
   async function loadState() {
@@ -458,6 +488,28 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     };
 
     window.addEventListener("resize", render);
+
+    let previewTimer = null;
+    el.previewSlider.addEventListener("input", () => {
+      state.previewMinute = Number(el.previewSlider.value);
+      render();
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(async () => {
+        try {
+          const r = await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute });
+          if (r.outputs) { state.outputs = r.outputs; render(); }
+        } catch (_) {}
+      }, 150);
+    });
+
+    el.btnPreviewReset.onclick = async () => {
+      try {
+        const r = await api("/api/preview/set", "POST", { enabled: false });
+        state.previewMinute = null;
+        if (r.outputs) state.outputs = r.outputs;
+        render();
+      } catch (_) {}
+    };
 
     setInterval(async () => {
       try {
