@@ -101,6 +101,10 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
           <label for="password">Wachtwoord</label>
           <input id="password" type="password" placeholder="Jouw wifi wachtwoord">
         </div>
+        <div>
+          <label for="otaPassword">OTA wachtwoord</label>
+          <input id="otaPassword" type="text" placeholder="OTA wachtwoord voor uploads">
+        </div>
       </div>
       <div class="toolbar" style="margin-top:10px;">
         <button id="btnWifiSave" class="primary">Opslaan en verbinden</button>
@@ -137,6 +141,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   const el = {
     ssid: document.getElementById("ssid"),
     password: document.getElementById("password"),
+    otaPassword: document.getElementById("otaPassword"),
     hour: document.getElementById("hour"),
     minute: document.getElementById("minute"),
     btnWifiSave: document.getElementById("btnWifiSave"),
@@ -170,6 +175,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
   function renderState(s) {
     if (s.ssid) el.ssid.value = s.ssid;
+    if (typeof s.otaPassword === "string") el.otaPassword.value = s.otaPassword;
     const hh = Math.floor((s.nowMinute || 0) / 60);
     const mm = Math.floor((s.nowMinute || 0) % 60);
     el.live.textContent =
@@ -178,6 +184,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "stationIp: " + (s.stationIp || "0.0.0.0") + "\n" +
       "apMode: " + (!!s.apMode) + "\n" +
       "apIp: " + (s.apIp || "0.0.0.0") + "\n" +
+      "otaPassword: " + ((s.otaPassword || "").length ? "ingesteld" : "leeg") + "\n" +
       "ntpSynced: " + (!!s.ntpSynced) + "\n" +
       "manualTime: " + (!!s.manualTime) + "\n" +
       "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
@@ -194,7 +201,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     try {
       const out = await Api.saveWifi({
         ssid: el.ssid.value.trim(),
-        password: el.password.value
+        password: el.password.value,
+        otaPassword: el.otaPassword.value
       });
       setStatus(el.wifiStatus, out.connected ? "Verbonden met wifi" : "Niet verbonden, AP mode actief", out.connected ? "ok" : "");
       await refresh();

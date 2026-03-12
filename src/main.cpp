@@ -51,6 +51,7 @@ struct SchedulerData {
 struct WifiConfigData {
   String ssid;
   String password;
+  String otaPassword;
 };
 
 SchedulerData gData{};
@@ -65,9 +66,15 @@ bool apModeActive = false;
 bool ntpConfigured = false;
 bool otaConfigured = false;
 bool manualTimeActive = false;
+bool simulationActive = false;
+bool otaInProgress = false;
+bool debugWasEnabledBeforeOta = false;
 
 uint16_t manualTimeBaseMinute = 0;
 unsigned long manualTimeSetMs = 0;
+uint16_t simulationStartMinute = 0;
+unsigned long simulationStartMs = 0;
+uint16_t simulationDaySeconds = 120;
 
 uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 unsigned long lastPwmUpdateMs = 0;
@@ -90,6 +97,12 @@ float smoothStep(float t) {
   if (t <= 0.0f) return 0.0f;
   if (t >= 1.0f) return 1.0f;
   return t * t * (3.0f - 2.0f * t);
+}
+
+uint16_t clampSimulationSeconds(int seconds) {
+  if (seconds < 5) return 5;
+  if (seconds > 3600) return 3600;
+  return static_cast<uint16_t>(seconds);
 }
 
 bool isPlaceholderSsid(const String &ssid) {
@@ -199,6 +212,7 @@ bool saveSchedulerData() {
 
   DynamicJsonDocument doc(28672);
   doc["activePreset"] = gData.activePreset;
+  doc["simulationDaySeconds"] = simulationDaySeconds;
   JsonArray presets = doc.createNestedArray("presets");
 
   for (uint8_t p = 0; p < gData.presetCount; ++p) {
@@ -257,6 +271,7 @@ bool loadSchedulerData() {
 
   gData.presetCount = min<uint8_t>(presets.size(), MAX_PRESETS);
   gData.activePreset = min<uint8_t>(doc["activePreset"] | 0, gData.presetCount - 1);
+  simulationDaySeconds = clampSimulationSeconds(doc["simulationDaySeconds"] | simulationDaySeconds);
 
   for (uint8_t p = 0; p < gData.presetCount; ++p) {
     JsonObject jp = presets[p].as<JsonObject>();
@@ -289,6 +304,7 @@ bool saveWifiConfig(const WifiConfigData &cfg) {
   DynamicJsonDocument doc(1024);
   doc["ssid"] = cfg.ssid;
   doc["password"] = cfg.password;
+  doc["otaPassword"] = cfg.otaPassword;
 
   File f = LittleFS.open(WIFI_FILE, FILE_WRITE);
   if (!f) return false;
@@ -300,6 +316,7 @@ bool saveWifiConfig(const WifiConfigData &cfg) {
 void loadWifiConfig(WifiConfigData &cfg) {
   cfg.ssid = "";
   cfg.password = "";
+  cfg.otaPassword = String(OTA_PASSWORD);
 
   if (fsReady && LittleFS.exists(WIFI_FILE)) {
     File f = LittleFS.open(WIFI_FILE, FILE_READ);
@@ -310,6 +327,7 @@ void loadWifiConfig(WifiConfigData &cfg) {
       if (!err) {
         cfg.ssid = String((const char *)(doc["ssid"] | ""));
         cfg.password = String((const char *)(doc["password"] | ""));
+        cfg.otaPassword = String((const char *)(doc["otaPassword"] | OTA_PASSWORD));
       }
     }
   }
@@ -357,6 +375,7 @@ bool connectWifiStation(uint16_t retryCycles = 80) {
 
   WiFi.setHostname(DEVICE_HOSTNAME);
   WiFi.mode(apModeActive ? WIFI_AP_STA : WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.begin(gWifiConfig.ssid.c_str(), gWifiConfig.password.c_str());
 
   Serial.printf("[WIFI] Verbinden met %s", gWifiConfig.ssid.c_str());
@@ -388,10 +407,39 @@ void setupOta() {
   if (otaConfigured) return;
 
   ArduinoOTA.setHostname(DEVICE_HOSTNAME);
-  ArduinoOTA.setPassword(OTA_PASSWORD);
-  ArduinoOTA.onStart([]() { Serial.println("[OTA] Start"); });
-  ArduinoOTA.onEnd([]() { Serial.println("[OTA] Klaar"); });
-  ArduinoOTA.onError([](ota_error_t err) { Serial.printf("[OTA] Fout %u\n", err); });
+  ArduinoOTA.setPassword(gWifiConfig.otaPassword.c_str());
+  ArduinoOTA.setTimeout(30000);
+  ArduinoOTA.setMdnsEnabled(true);
+  ArduinoOTA.onStart([]() {
+    otaInProgress = true;
+    debugWasEnabledBeforeOta = debugEnabled;
+    debugEnabled = false;
+    server.stop();
+    if (apModeActive) dnsServer.stop();
+    Serial.println("[OTA] Start");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    static unsigned int lastPercent = 999;
+    if (progress == 0) lastPercent = 0;
+    const unsigned int percent = total > 0 ? (progress * 100U) / total : 0U;
+    if (percent >= lastPercent + 10U || percent == 100U) {
+      lastPercent = percent;
+      Serial.printf("[OTA] %u%%\n", percent);
+    }
+    yield();
+  });
+  ArduinoOTA.onEnd([]() {
+    otaInProgress = false;
+    debugEnabled = debugWasEnabledBeforeOta;
+    Serial.println("[OTA] Klaar, herstart...");
+  });
+  ArduinoOTA.onError([](ota_error_t err) {
+    otaInProgress = false;
+    debugEnabled = debugWasEnabledBeforeOta;
+    Serial.printf("[OTA] Fout %u\n", err);
+    server.begin();
+    if (apModeActive) dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  });
   ArduinoOTA.begin();
   otaConfigured = true;
   Serial.println("[OTA] Actief.");
@@ -403,7 +451,7 @@ void activateNetworkServicesIfConnected() {
   setupOta();
 }
 
-float getMinuteOfDay() {
+float getBaseMinuteOfDay() {
   if (ntpTimeValid()) {
     time_t now = time(nullptr);
     struct tm localTime;
@@ -420,6 +468,65 @@ float getMinuteOfDay() {
   float minute = (millis() / 1000.0f) / 60.0f;
   while (minute >= 1440.0f) minute -= 1440.0f;
   return minute;
+}
+
+float getSimulatedMinuteOfDay() {
+  if (!simulationActive) return getBaseMinuteOfDay();
+
+  const unsigned long elapsedMs = millis() - simulationStartMs;
+  const float dayMs = static_cast<float>(simulationDaySeconds) * 1000.0f;
+  float minute = simulationStartMinute + (elapsedMs / dayMs) * 1440.0f;
+  while (minute >= 1440.0f) minute -= 1440.0f;
+  while (minute < 0.0f) minute += 1440.0f;
+  return minute;
+}
+
+float getMinuteOfDay() {
+  return getSimulatedMinuteOfDay();
+}
+
+String currentDateTimeText() {
+  if (ntpTimeValid()) {
+    time_t now = time(nullptr);
+    struct tm localTime;
+    localtime_r(&now, &localTime);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &localTime);
+    return String(buf);
+  }
+
+  const float minute = getMinuteOfDay();
+  const int hh = static_cast<int>(minute) / 60;
+  const int mm = static_cast<int>(minute) % 60;
+  char buf[32];
+  snprintf(buf, sizeof(buf), "onbekend %02d:%02d", hh, mm);
+  return String(buf);
+}
+
+void setSimulation(bool enabled, int daySeconds) {
+  const uint16_t clampedSeconds = clampSimulationSeconds(daySeconds);
+  simulationDaySeconds = clampedSeconds;
+
+  if (enabled) {
+    if (!simulationActive) {
+      simulationStartMinute = static_cast<uint16_t>(roundf(getBaseMinuteOfDay()));
+      simulationStartMs = millis();
+    } else {
+      simulationStartMinute = static_cast<uint16_t>(roundf(getSimulatedMinuteOfDay()));
+      simulationStartMs = millis();
+    }
+    simulationActive = true;
+    Serial.printf("[SIM] Aan: 1 dag in %u sec, start=%u min\n", simulationDaySeconds, simulationStartMinute);
+  } else {
+    const uint16_t frozenMinute = static_cast<uint16_t>(roundf(getSimulatedMinuteOfDay()));
+    simulationActive = false;
+    manualTimeBaseMinute = frozenMinute;
+    manualTimeSetMs = millis();
+    manualTimeActive = true;
+    Serial.println("[SIM] Uit: huidige simulatietijd vastgezet als handmatige tijd.");
+  }
+
+  saveSchedulerData();
 }
 
 uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
@@ -500,6 +607,10 @@ String stateJson() {
   doc["apIp"] = apModeActive ? WiFi.softAPIP().toString() : "0.0.0.0";
   doc["ntpSynced"] = ntpTimeValid();
   doc["manualTime"] = manualTimeActive;
+  doc["simulationActive"] = simulationActive;
+  doc["simulationDaySeconds"] = simulationDaySeconds;
+  doc["dateTime"] = currentDateTimeText();
+  doc["otaPassword"] = gWifiConfig.otaPassword;
 
   JsonArray out = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
@@ -649,7 +760,11 @@ void handleWifiSave() {
 
   String ssid = String((const char *)(body["ssid"] | ""));
   String password = String((const char *)(body["password"] | ""));
+  String otaPassword = body["otaPassword"].isNull()
+                           ? gWifiConfig.otaPassword
+                           : String((const char *)(body["otaPassword"] | ""));
   ssid.trim();
+  otaPassword.trim();
 
   if (ssid.isEmpty()) {
     DynamicJsonDocument resp(256);
@@ -660,10 +775,14 @@ void handleWifiSave() {
 
   gWifiConfig.ssid = ssid;
   gWifiConfig.password = password;
+  if (!otaPassword.isEmpty()) {
+    gWifiConfig.otaPassword = otaPassword;
+  }
   saveWifiConfig(gWifiConfig);
 
   bool connected = connectWifiStation(60);
   if (connected) {
+    otaConfigured = false;
     activateNetworkServicesIfConnected();
     stopConfigAp();
   } else {
@@ -706,6 +825,27 @@ void handleTimeSet() {
   sendJson(200, resp);
 }
 
+void handleSimulationSet() {
+  DynamicJsonDocument body(512);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  bool enabled = body["enabled"] | false;
+  int daySeconds = body["daySeconds"] | simulationDaySeconds;
+  setSimulation(enabled, daySeconds);
+
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["simulationActive"] = simulationActive;
+  resp["simulationDaySeconds"] = simulationDaySeconds;
+  resp["nowMinute"] = getMinuteOfDay();
+  sendJson(200, resp);
+}
+
 void setupWebServer() {
   if (WiFi.getMode() == WIFI_MODE_NULL) {
     WiFi.mode(WIFI_STA);
@@ -719,6 +859,7 @@ void setupWebServer() {
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
   server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
   server.on("/api/time/set", HTTP_POST, handleTimeSet);
+  server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);
 
   server.onNotFound([]() {
     if (apModeActive) {
@@ -900,10 +1041,16 @@ void setup() {
 }
 
 void loop() {
+  if (wifiConnected() && otaConfigured) ArduinoOTA.handle();
+
+  if (otaInProgress) {
+    yield();
+    return;
+  }
+
   server.handleClient();
 
   if (apModeActive) dnsServer.processNextRequest();
-  if (wifiConnected() && otaConfigured) ArduinoOTA.handle();
 
   ensureWifiLink();
   handleSerialCli();
