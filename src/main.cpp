@@ -626,7 +626,7 @@ void updateOutputs() {
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     float target = static_cast<float>(evaluateCurve(active.channels[ch], minute));
-    if (previewActive) {
+    if (previewActive || simulationActive) {
       smoothOutputs[ch] = target;
     } else {
       float diff = target - smoothOutputs[ch];
@@ -720,6 +720,7 @@ void handleGetStateLight() {
   doc["nowMinute"] = getMinuteOfDay();
   doc["dateTime"] = currentDateTimeText();
   doc["simulationActive"] = simulationActive;
+  doc["simulationDaySeconds"] = simulationDaySeconds;
   doc["previewActive"] = previewActive;
   JsonArray out = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
@@ -1030,6 +1031,11 @@ void handleSimulationSet() {
 
   bool enabled = body["enabled"] | false;
   int daySeconds = body["daySeconds"] | simulationDaySeconds;
+
+  if (enabled) {
+    previewActive = false;
+  }
+
   setSimulation(enabled, daySeconds);
 
   DynamicJsonDocument resp(256);
@@ -1051,6 +1057,9 @@ void handlePreviewSet() {
 
   bool enabled = body["enabled"] | false;
   if (enabled) {
+    if (simulationActive) {
+      setSimulation(false, simulationDaySeconds);
+    }
     int minute = body["minute"] | 0;
     previewMinute = clampMinute(minute);
     previewActive = true;

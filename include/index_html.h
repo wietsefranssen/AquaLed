@@ -57,7 +57,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <option value="600">10 min</option>
     </select>
     <button id="btnSimStart" class="primary">Start simulatie</button>
-    <button id="btnSimStop">Stop simulatie</button>
     <span id="simState" class="small">Uit</span>
   </div>
 
@@ -106,7 +105,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     btnRename: document.getElementById("btnRename"),
     btnDelete: document.getElementById("btnDelete"),
     btnSimStart: document.getElementById("btnSimStart"),
-    btnSimStop: document.getElementById("btnSimStop"),
     simState: document.getElementById("simState"),
     previewSlider: document.getElementById("previewSlider"),
     previewTime: document.getElementById("previewTime"),
@@ -297,6 +295,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
+    el.btnSimStart.textContent = state.simulationActive ? "Stop simulatie" : "Start simulatie";
+    el.btnSimStart.className = state.simulationActive ? "" : "primary";
 
     if (state.previewMinute !== null) {
       el.previewTime.textContent = fmtMin(state.previewMinute);
@@ -523,19 +523,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     el.btnSimStart.onclick = async () => {
       try {
-        await setSimulation(true);
-        setStatus("Simulatie gestart", false);
+        const enable = !state.simulationActive;
+        if (enable) {
+          state.previewMinute = null;
+          stopSimLoop();
+        }
+        await setSimulation(enable);
+        setStatus(enable ? "Simulatie gestart" : "Simulatie gestopt", false);
       } catch (e) {
-        setStatus("Simulatie starten mislukt: " + e.message, true);
-      }
-    };
-
-    el.btnSimStop.onclick = async () => {
-      try {
-        await setSimulation(false);
-        setStatus("Simulatie gestopt", false);
-      } catch (e) {
-        setStatus("Simulatie stoppen mislukt: " + e.message, true);
+        setStatus("Simulatie mislukt: " + e.message, true);
       }
     };
 
@@ -558,6 +554,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     el.previewSlider.addEventListener("input", () => {
       state.previewMinute = Number(el.previewSlider.value);
+      if (state.simulationActive) {
+        state.simulationActive = false;
+        stopSimLoop();
+      }
       localPreviewOutputs(state.previewMinute);
       render();
     });
@@ -580,6 +580,37 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     };
 
     let pollId = null;
+    let simAnchor = null;
+    let simRafId = null;
+
+    function localSimOutputs(minute) {
+      const preset = state.working || state.presets[state.activePreset];
+      if (!preset || !preset.channels) return;
+      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
+    }
+
+    function simFrame() {
+      if (!state.simulationActive || !simAnchor) { simRafId = null; return; }
+      const elapsed = (performance.now() - simAnchor.ts) / 1000;
+      const daySeconds = state.simulationDaySeconds || 120;
+      let m = simAnchor.minute + (elapsed / daySeconds) * 1440;
+      while (m >= 1440) m -= 1440;
+      state.nowMinute = m;
+      localSimOutputs(m);
+      render();
+      simRafId = requestAnimationFrame(simFrame);
+    }
+
+    function startSimLoop(anchorMinute) {
+      simAnchor = { minute: anchorMinute, ts: performance.now() };
+      if (!simRafId) simRafId = requestAnimationFrame(simFrame);
+    }
+
+    function stopSimLoop() {
+      if (simRafId) { cancelAnimationFrame(simRafId); simRafId = null; }
+      simAnchor = null;
+    }
+
     function startPoll() {
       if (pollId) return;
       pollId = setInterval(async () => {
@@ -590,9 +621,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           state.outputs = s.outputs || state.outputs;
           state.dateTime = s.dateTime || state.dateTime;
           state.simulationActive = !!s.simulationActive;
+          state.simulationDaySeconds = Number(s.simulationDaySeconds || state.simulationDaySeconds);
           if (s.previewActive) state.previewMinute = s.nowMinute;
           else state.previewMinute = null;
-          render();
+          if (state.simulationActive) {
+            startSimLoop(s.nowMinute);
+          } else {
+            stopSimLoop();
+            render();
+          }
         } catch (_) {}
       }, 1000);
     }
