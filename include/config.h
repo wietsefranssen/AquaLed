@@ -24,4 +24,4 @@
 
 // Hardware instellingen
 static constexpr int LED_CHANNEL_COUNT = 5;
-static constexpr int LED_PINS[LED_CHANNEL_COUNT] = {16, 17, 18, 19, 21};
+static constexpr int LED_PINS[LED_CHANNEL_COUNT] = {25, 26, 27, 32, 33};

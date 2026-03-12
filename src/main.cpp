@@ -45,6 +45,7 @@ WebServer server(80);
 String cliBuffer;
 
 bool debugEnabled = true;
+bool fsReady = false;
 uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 unsigned long lastPwmUpdateMs = 0;
 unsigned long lastDebugMs = 0;
@@ -498,10 +499,12 @@ void setupWebServer() {
 
 void setupPwm() {
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    Serial.printf("[PWM] Init ch%u pin=%d\n", ch + 1, LED_PINS[ch]);
     ledcSetup(ch, PWM_FREQ, PWM_RESOLUTION);
     ledcAttachPin(LED_PINS[ch], ch);
     writePwm(ch, 0);
   }
+  Serial.println("[PWM] Init klaar.");
 }
 
 void connectWifi() {
@@ -621,18 +624,28 @@ void setup() {
   delay(300);
   Serial.println("\n[AquaLed] Boot gestart.");
 
+  Serial.println("[BOOT] setupPwm");
   setupPwm();
 
-  if (!LittleFS.begin(true)) {
-    Serial.println("[FS] LittleFS kon niet starten.");
+  Serial.println("[BOOT] LittleFS.begin");
+  fsReady = LittleFS.begin(false);
+  if (!fsReady) {
+    Serial.println("[FS] LittleFS mount mislukt (zonder auto-format). Defaults gebruikt.");
+    initDefaultData();
+  } else {
+    Serial.println("[FS] LittleFS actief.");
+    Serial.println("[BOOT] loadSchedulerData");
+    loadSchedulerData();
   }
 
-  loadSchedulerData();
-
+  Serial.println("[BOOT] connectWifi");
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("[BOOT] setupTimeSync");
     setupTimeSync();
+    Serial.println("[BOOT] setupOta");
     setupOta();
+    Serial.println("[BOOT] setupWebServer");
     setupWebServer();
   }
 
