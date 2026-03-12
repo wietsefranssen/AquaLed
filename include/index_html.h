@@ -18,9 +18,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .status { font-size: .9rem; color: #5b6f64; }
     .channels { display: grid; gap: 10px; }
     .ch { border: 1px solid #d6e2d8; border-radius: 10px; padding: 8px; background: #fff; }
-    canvas { width: 100%; height: 160px; display: block; border: 1px solid #d4e0d8; border-radius: 8px; background: #f9fcfa; touch-action: none; }
+    canvas { width: 100%; height: 160px; display: block; border: 1px solid #d4e0d8; border-radius: 8px; background: #f9fcfa; touch-action: none; cursor: crosshair; }
     pre { white-space: pre-wrap; }
     .small { font-size: .85rem; color: #5b6f64; }
+    .tooltip { position: fixed; pointer-events: none; background: rgba(16,32,24,.88); color: #fff; padding: 4px 8px; border-radius: 6px; font: 12px/1.4 Menlo, monospace; z-index: 99; white-space: nowrap; }
     @media (min-width: 980px) { .layout { display: grid; grid-template-columns: 1.4fr .8fr; gap: 12px; } }
   </style>
 </head>
@@ -36,10 +37,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <div class="card toolbar">
     <label for="presetSelect">Preset</label>
     <select id="presetSelect"></select>
-    <input id="presetName" placeholder="Naam nieuwe preset">
+    <input id="presetName" placeholder="Naam preset">
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
-    <span id="status" class="status">Klaar</span>
+    <button id="btnRename">Hernoem</button>
+    <button id="btnDelete" style="color:#a54733;">Verwijder</button>
+    <span id="status" class="status"></span>
   </div>
 
   <div class="card toolbar">
@@ -100,6 +103,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     channels: document.getElementById("channels"),
     live: document.getElementById("live"),
     simSeconds: document.getElementById("simSeconds"),
+    btnRename: document.getElementById("btnRename"),
+    btnDelete: document.getElementById("btnDelete"),
     btnSimStart: document.getElementById("btnSimStart"),
     btnSimStop: document.getElementById("btnSimStop"),
     simState: document.getElementById("simState"),
@@ -114,6 +119,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   const xToMinute = (x, w) => Math.round((Math.max(0, Math.min(w, x)) / w) * DAY_MIN);
   const yToValue = (y, h) => Math.round(((h - Math.max(0, Math.min(h, y))) / h) * 255);
   const smoothStep = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  const toPct = (v) => Math.round(v / 255 * 100);
+  const fmtMin = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
+
+  let statusTimer = null;
+  const tooltip = document.createElement("div");
+  tooltip.className = "tooltip";
+  tooltip.style.display = "none";
+  document.body.appendChild(tooltip);
 
   async function api(path, method = "GET", body = null) {
     const init = { method, headers: {} };
@@ -130,6 +143,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function setStatus(text, err = false) {
     el.status.textContent = text;
     el.status.style.color = err ? "#a54733" : "#2b6d3f";
+    clearTimeout(statusTimer);
+    if (text) statusTimer = setTimeout(() => { el.status.textContent = ""; }, 3000);
   }
 
   function sortAndClamp(points) {
@@ -212,6 +227,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       const tx = Math.max(2, Math.min(w - 36, x - 16));
       ctx.fillText(label, tx, h - 4);
     }
+
+    ctx.textAlign = "right";
+    for (let pct = 0; pct <= 100; pct += 25) {
+      const y = h - (pct / 100) * h;
+      if (y > 12 && y < h - 12) ctx.fillText(pct + "%", 30, y + 4);
+    }
+    ctx.textAlign = "left";
   }
 
   function draw(idx) {
@@ -265,30 +287,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function render() {
     for (let i = 0; i < CHANNELS; i++) draw(i);
     const displayMin = state.previewMinute !== null ? state.previewMinute : state.nowMinute;
-    const hh = Math.floor(displayMin / 60);
-    const mm = Math.floor(displayMin % 60);
     el.live.textContent =
       "Preset: " + (state.presets[state.activePreset]?.name || "-") + "\n" +
       "Datum/tijd: " + (state.dateTime || "-") + "\n" +
-      "Tijd (minuut): " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
+      "Tijd (minuut): " + fmtMin(displayMin) + "\n" +
       "Simulatie: " + (state.simulationActive ? ("aan (1 dag / " + state.simulationDaySeconds + "s)") : "uit") + "\n" +
-      "Outputs: " + state.outputs.map((v, i) => "ch" + (i+1) + "=" + v).join(", ") +
+      "Outputs: " + state.outputs.map((v, i) => "ch" + (i+1) + "=" + toPct(v) + "%").join(", ") +
       (state.previewMinute !== null ? "\nPreview: aan" : "");
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
 
     if (state.previewMinute !== null) {
-      const ph = Math.floor(state.previewMinute / 60);
-      const pm = Math.floor(state.previewMinute % 60);
-      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
+      el.previewTime.textContent = fmtMin(state.previewMinute);
       el.previewSlider.value = state.previewMinute;
       el.btnPreviewReset.style.display = "";
     } else {
       el.previewSlider.value = Math.round(state.nowMinute);
-      const ph = Math.floor(state.nowMinute / 60);
-      const pm = Math.floor(state.nowMinute % 60);
-      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
+      el.previewTime.textContent = fmtMin(state.nowMinute);
       el.btnPreviewReset.style.display = "none";
     }
   }
@@ -353,10 +369,30 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       state.working.channels[idx] = sortAndClamp(pts);
       state.dragging.point = nearest(state.working.channels[idx], x, y, r.width, r.height);
       draw(idx);
+      const dp = pts[state.dragging.point];
+      if (dp) {
+        tooltip.textContent = fmtMin(dp.minute) + " \u2014 " + toPct(dp.value) + "%";
+        tooltip.style.display = "";
+        tooltip.style.left = (e.clientX + 12) + "px";
+        tooltip.style.top = (e.clientY - 28) + "px";
+      }
     });
 
     c.addEventListener("pointerup", () => { state.dragging = null; });
-    c.addEventListener("pointerleave", () => { state.dragging = null; });
+    c.addEventListener("pointerleave", () => { state.dragging = null; tooltip.style.display = "none"; });
+
+    c.addEventListener("pointermove", (e) => {
+      if (state.dragging) return;
+      const r = c.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const minute = xToMinute(x, r.width);
+      const value = evaluateSmooth(state.working.channels[idx], minute);
+      tooltip.textContent = fmtMin(minute) + " — " + toPct(value) + "%";
+      tooltip.style.display = "";
+      tooltip.style.left = (e.clientX + 12) + "px";
+      tooltip.style.top = (e.clientY - 28) + "px";
+    });
   }
 
   function buildChannels() {
@@ -438,7 +474,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       try {
         await api("/api/preset/select", "POST", { index: idx });
         await loadState();
-        setStatus("Preset geladen", false);
       } catch (e) {
         setStatus("Laden mislukt: " + e.message, true);
       }
@@ -457,6 +492,32 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         setStatus("Preset overschreven", false);
       } catch (e) {
         setStatus("Opslaan mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnRename.onclick = async () => {
+      const idx = Number(el.presetSelect.value || 0);
+      const newName = el.presetName.value.trim();
+      if (!newName) return setStatus("Vul eerst een naam in", true);
+      try {
+        await api("/api/preset/rename", "POST", { index: idx, name: newName });
+        await loadState();
+        setStatus("Preset hernoemd", false);
+      } catch (e) {
+        setStatus("Hernoemen mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnDelete.onclick = async () => {
+      const idx = Number(el.presetSelect.value || 0);
+      const name = state.presets[idx]?.name || "";
+      if (!confirm("Preset '" + name + "' verwijderen?")) return;
+      try {
+        await api("/api/preset/delete", "POST", { index: idx });
+        await loadState();
+        setStatus("Preset verwijderd", false);
+      } catch (e) {
+        setStatus("Verwijderen mislukt: " + e.message, true);
       }
     };
 

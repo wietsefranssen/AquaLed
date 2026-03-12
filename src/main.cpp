@@ -432,26 +432,39 @@ void setupTimeSync() {
   Serial.println("[NTP] Tijd sync gestart.");
 }
 
+const char *otaErrorString(ota_error_t err) {
+  switch (err) {
+    case OTA_AUTH_ERROR:    return "Auth fout (wachtwoord?)";
+    case OTA_BEGIN_ERROR:   return "Begin fout (geen ruimte?)";
+    case OTA_CONNECT_ERROR: return "Verbinding mislukt";
+    case OTA_RECEIVE_ERROR: return "Ontvangst fout";
+    case OTA_END_ERROR:     return "Einde fout";
+    default:                return "Onbekend";
+  }
+}
+
 void setupOta() {
-  if (otaConfigured) return;
+  ArduinoOTA.end();
 
   ArduinoOTA.setHostname(DEVICE_HOSTNAME);
   ArduinoOTA.setPassword(gWifiConfig.otaPassword.c_str());
-  ArduinoOTA.setTimeout(30000);
+  ArduinoOTA.setTimeout(120000);
   ArduinoOTA.setMdnsEnabled(true);
+  ArduinoOTA.setRebootOnSuccess(true);
   ArduinoOTA.onStart([]() {
     otaInProgress = true;
     debugWasEnabledBeforeOta = debugEnabled;
     debugEnabled = false;
     server.stop();
     if (apModeActive) dnsServer.stop();
-    Serial.println("[OTA] Start");
+    WiFi.setSleep(false);
+    Serial.println("[OTA] Start upload...");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     static unsigned int lastPercent = 999;
     if (progress == 0) lastPercent = 0;
     const unsigned int percent = total > 0 ? (progress * 100U) / total : 0U;
-    if (percent >= lastPercent + 10U || percent == 100U) {
+    if (percent >= lastPercent + 5U || percent == 100U) {
       lastPercent = percent;
       Serial.printf("[OTA] %u%%\n", percent);
     }
@@ -464,14 +477,16 @@ void setupOta() {
   });
   ArduinoOTA.onError([](ota_error_t err) {
     otaInProgress = false;
+    otaConfigured = false;
     debugEnabled = debugWasEnabledBeforeOta;
-    Serial.printf("[OTA] Fout %u\n", err);
+    Serial.printf("[OTA] Fout %u: %s\n", err, otaErrorString(err));
+    delay(500);
     server.begin();
     if (apModeActive) dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   });
   ArduinoOTA.begin();
   otaConfigured = true;
-  Serial.println("[OTA] Actief.");
+  Serial.printf("[OTA] Actief. Host: %s, IP: %s\n", DEVICE_HOSTNAME, WiFi.localIP().toString().c_str());
 }
 
 void activateNetworkServicesIfConnected() {
@@ -638,7 +653,7 @@ void printStatusToSerial() {
                 gData.presets[gData.activePreset].name.c_str(),
                 previewActive ? " [PREVIEW]" : "");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    Serial.printf(" ch%u=%u", ch + 1, currentOutputs[ch]);
+    Serial.printf(" ch%u=%u%%", ch + 1, (currentOutputs[ch] * 100 + 127) / 255);
   }
   Serial.println();
 }
@@ -794,6 +809,81 @@ void handlePresetSelect() {
   }
 
   gData.activePreset = index;
+  saveSchedulerData();
+
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["activePreset"] = gData.activePreset;
+  sendJson(200, resp);
+}
+
+void handlePresetRename() {
+  DynamicJsonDocument body(512);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  int index = body["index"] | -1;
+  if (index < 0 || index >= gData.presetCount) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "preset index out of range";
+    return sendJson(400, resp);
+  }
+
+  String name = String((const char *)(body["name"] | ""));
+  name.trim();
+  if (name.isEmpty()) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "name required";
+    return sendJson(400, resp);
+  }
+
+  gData.presets[index].name = name;
+  saveSchedulerData();
+
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  sendJson(200, resp);
+}
+
+void handlePresetDelete() {
+  DynamicJsonDocument body(512);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  int index = body["index"] | -1;
+  if (index < 0 || index >= gData.presetCount) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "preset index out of range";
+    return sendJson(400, resp);
+  }
+
+  if (gData.presetCount <= 1) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "cannot delete last preset";
+    return sendJson(400, resp);
+  }
+
+  for (int i = index; i < gData.presetCount - 1; ++i)
+    gData.presets[i] = gData.presets[i + 1];
+  gData.presetCount--;
+
+  if (gData.activePreset >= gData.presetCount)
+    gData.activePreset = gData.presetCount - 1;
+  else if (gData.activePreset > index)
+    gData.activePreset--;
+
   saveSchedulerData();
 
   DynamicJsonDocument resp(256);
@@ -1011,6 +1101,8 @@ void setupWebServer() {
   server.on("/api/state", HTTP_GET, handleGetState);
   server.on("/api/preset/upsert", HTTP_POST, handlePresetUpsert);
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
+  server.on("/api/preset/rename", HTTP_POST, handlePresetRename);
+  server.on("/api/preset/delete", HTTP_POST, handlePresetDelete);
   server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
   server.on("/api/time/set", HTTP_POST, handleTimeSet);
   server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);
@@ -1045,6 +1137,7 @@ void setupPwm() {
 }
 
 void ensureWifiLink() {
+  if (otaInProgress) return;
   const unsigned long now = millis();
   if (wifiConnected()) return;
   const unsigned long retryInterval = apModeActive ? 60000 : WIFI_RETRY_MS;
@@ -1139,7 +1232,7 @@ void handleCliCommand(String cmd) {
       int mm = previewMinute % 60;
       Serial.printf("[CLI] Preview aan: %02d:%02d | Out:", hh, mm);
       for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
-        Serial.printf(" ch%u=%u", ch + 1, currentOutputs[ch]);
+        Serial.printf(" ch%u=%u%%", ch + 1, (currentOutputs[ch] * 100 + 127) / 255);
       Serial.println();
     } else {
       Serial.println("[CLI] Preview uit.");
@@ -1162,7 +1255,7 @@ void handleCliCommand(String cmd) {
           updateOutputs();
           Serial.printf("[CLI] Preview aan: %02d:%02d | Out:", hh, mm);
           for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
-            Serial.printf(" ch%u=%u", ch + 1, currentOutputs[ch]);
+            Serial.printf(" ch%u=%u%%", ch + 1, (currentOutputs[ch] * 100 + 127) / 255);
           Serial.println();
         } else {
           Serial.println("[CLI] Ongeldige tijd, gebruik HH:MM.");
@@ -1223,6 +1316,8 @@ void setup() {
   loadWifiConfig(gWifiConfig);
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   Serial.println("[BOOT] setupWebServer");
   setupWebServer();
@@ -1240,12 +1335,14 @@ void setup() {
 }
 
 void loop() {
-  if (wifiConnected() && otaConfigured) ArduinoOTA.handle();
+  if (otaConfigured) ArduinoOTA.handle();
 
   if (otaInProgress) {
-    yield();
+    delay(1);
     return;
   }
+
+  if (!otaConfigured && wifiConnected()) setupOta();
 
   server.handleClient();
 
