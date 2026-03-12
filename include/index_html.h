@@ -550,17 +550,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     window.addEventListener("resize", render);
 
-    let previewTimer = null;
+    function localPreviewOutputs(minute) {
+      const preset = state.working || state.presets[state.activePreset];
+      if (!preset || !preset.channels) return;
+      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
+    }
+
     el.previewSlider.addEventListener("input", () => {
       state.previewMinute = Number(el.previewSlider.value);
+      localPreviewOutputs(state.previewMinute);
       render();
-      clearTimeout(previewTimer);
-      previewTimer = setTimeout(async () => {
-        try {
-          const r = await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute });
-          if (r.outputs) { state.outputs = r.outputs; render(); }
-        } catch (_) {}
-      }, 150);
+    });
+
+    el.previewSlider.addEventListener("change", async () => {
+      try {
+        const r = await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute });
+        if (r.outputs) { state.outputs = r.outputs; render(); }
+      } catch (_) {}
     });
 
     el.btnPreviewReset.onclick = async () => {
@@ -569,17 +575,29 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         state.previewMinute = null;
         if (r.outputs) state.outputs = r.outputs;
         render();
+        startPoll();
       } catch (_) {}
     };
 
-    setInterval(async () => {
-      try {
-        const s = await api("/api/state");
-        mergeState(s);
-        render();
-      } catch (_) {
-      }
-    }, 1000);
+    let pollId = null;
+    function startPoll() {
+      if (pollId) return;
+      pollId = setInterval(async () => {
+        try {
+          if (state.previewMinute !== null) { stopPoll(); return; }
+          const s = await api("/api/state/light");
+          state.nowMinute = s.nowMinute || 0;
+          state.outputs = s.outputs || state.outputs;
+          state.dateTime = s.dateTime || state.dateTime;
+          state.simulationActive = !!s.simulationActive;
+          if (s.previewActive) state.previewMinute = s.nowMinute;
+          else state.previewMinute = null;
+          render();
+        } catch (_) {}
+      }, 1000);
+    }
+    function stopPoll() { clearInterval(pollId); pollId = null; }
+    startPoll();
   }
 
   boot().catch(err => setStatus("Initialisatie fout: " + err.message, true));

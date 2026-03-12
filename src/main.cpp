@@ -715,6 +715,17 @@ void handleGetState() {
   server.send(200, "application/json", stateJson());
 }
 
+void handleGetStateLight() {
+  DynamicJsonDocument doc(512);
+  doc["nowMinute"] = getMinuteOfDay();
+  doc["dateTime"] = currentDateTimeText();
+  doc["simulationActive"] = simulationActive;
+  doc["previewActive"] = previewActive;
+  JsonArray out = doc.createNestedArray("outputs");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
+  sendJson(200, doc);
+}
+
 bool parsePresetFromJson(JsonVariantConst root, Preset &outPreset) {
   outPreset.name = String((const char *)(root["name"] | "Preset"));
 
@@ -1099,6 +1110,7 @@ void setupWebServer() {
   server.on("/settings", HTTP_GET, []() { server.send_P(200, "text/html", SETTINGS_HTML); });
 
   server.on("/api/state", HTTP_GET, handleGetState);
+  server.on("/api/state/light", HTTP_GET, handleGetStateLight);
   server.on("/api/preset/upsert", HTTP_POST, handlePresetUpsert);
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
   server.on("/api/preset/rename", HTTP_POST, handlePresetRename);
