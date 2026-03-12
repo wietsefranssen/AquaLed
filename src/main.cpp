@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
+#include <DNSServer.h>
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -8,6 +9,7 @@
 
 #include "config.h"
 #include "index_html.h"
+#include "settings_html.h"
 
 namespace {
 
@@ -18,6 +20,12 @@ constexpr uint16_t PWM_MAX_DUTY = (1 << PWM_RESOLUTION) - 1;
 constexpr uint8_t MAX_POINTS = 16;
 constexpr uint8_t MAX_PRESETS = 10;
 constexpr char SCHEDULE_FILE[] = "/schedule.json";
+constexpr char WIFI_FILE[] = "/wifi.json";
+
+constexpr unsigned long PWM_UPDATE_MS = 250;
+constexpr unsigned long DEBUG_PRINT_MS = 5000;
+constexpr unsigned long WIFI_RETRY_MS = 20000;
+constexpr byte DNS_PORT = 53;
 
 struct KeyPoint {
   uint16_t minute;
@@ -40,15 +48,31 @@ struct SchedulerData {
   Preset presets[MAX_PRESETS];
 };
 
+struct WifiConfigData {
+  String ssid;
+  String password;
+};
+
 SchedulerData gData{};
+WifiConfigData gWifiConfig{};
 WebServer server(80);
+DNSServer dnsServer;
 String cliBuffer;
 
 bool debugEnabled = true;
 bool fsReady = false;
+bool apModeActive = false;
+bool ntpConfigured = false;
+bool otaConfigured = false;
+bool manualTimeActive = false;
+
+uint16_t manualTimeBaseMinute = 0;
+unsigned long manualTimeSetMs = 0;
+
 uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 unsigned long lastPwmUpdateMs = 0;
 unsigned long lastDebugMs = 0;
+unsigned long lastWifiRetryMs = 0;
 
 uint16_t clampMinute(int minute) {
   if (minute < 0) return 0;
@@ -68,6 +92,37 @@ float smoothStep(float t) {
   return t * t * (3.0f - 2.0f * t);
 }
 
+bool isPlaceholderSsid(const String &ssid) {
+  return ssid.isEmpty() || ssid == "YOUR_WIFI_SSID";
+}
+
+bool hasWifiCredentials(const WifiConfigData &cfg) {
+  return !isPlaceholderSsid(cfg.ssid);
+}
+
+bool wifiConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool ntpTimeValid() {
+  return time(nullptr) > 100000;
+}
+
+String apSsid() {
+  uint64_t mac = ESP.getEfuseMac();
+  uint16_t suffix = static_cast<uint16_t>(mac & 0xFFFF);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "AquaLed-Setup-%04X", suffix);
+  return String(buf);
+}
+
+void setManualTime(uint8_t hour, uint8_t minute) {
+  manualTimeBaseMinute = static_cast<uint16_t>(hour * 60 + minute);
+  manualTimeSetMs = millis();
+  manualTimeActive = true;
+  Serial.printf("[TIME] Handmatige tijd gezet op %02u:%02u\n", hour, minute);
+}
+
 void sortAndNormalizeCurve(ChannelCurve &curve) {
   if (curve.pointCount == 0) {
     curve.pointCount = 2;
@@ -76,9 +131,7 @@ void sortAndNormalizeCurve(ChannelCurve &curve) {
     return;
   }
 
-  if (curve.pointCount > MAX_POINTS) {
-    curve.pointCount = MAX_POINTS;
-  }
+  if (curve.pointCount > MAX_POINTS) curve.pointCount = MAX_POINTS;
 
   for (uint8_t i = 0; i < curve.pointCount; ++i) {
     curve.points[i].minute = clampMinute(curve.points[i].minute);
@@ -88,9 +141,9 @@ void sortAndNormalizeCurve(ChannelCurve &curve) {
   for (uint8_t i = 0; i < curve.pointCount; ++i) {
     for (uint8_t j = i + 1; j < curve.pointCount; ++j) {
       if (curve.points[j].minute < curve.points[i].minute) {
-        KeyPoint tmp = curve.points[i];
+        KeyPoint t = curve.points[i];
         curve.points[i] = curve.points[j];
-        curve.points[j] = tmp;
+        curve.points[j] = t;
       }
     }
   }
@@ -111,9 +164,7 @@ void sortAndNormalizeCurve(ChannelCurve &curve) {
   }
 
   curve.pointCount = dedupCount;
-  for (uint8_t i = 0; i < dedupCount; ++i) {
-    curve.points[i] = dedup[i];
-  }
+  for (uint8_t i = 0; i < dedupCount; ++i) curve.points[i] = dedup[i];
 }
 
 void fillDefaultPreset(Preset &preset, const String &name) {
@@ -126,7 +177,6 @@ void fillDefaultPreset(Preset &preset, const String &name) {
       {0, 70, 170, 0},
       {0, 35, 90, 0},
   };
-
   const uint16_t times[4] = {0, 480, 1020, 1439};
 
   for (int ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
@@ -145,8 +195,9 @@ void initDefaultData() {
 }
 
 bool saveSchedulerData() {
-  DynamicJsonDocument doc(28672);
+  if (!fsReady) return false;
 
+  DynamicJsonDocument doc(28672);
   doc["activePreset"] = gData.activePreset;
   JsonArray presets = doc.createNestedArray("presets");
 
@@ -167,31 +218,25 @@ bool saveSchedulerData() {
   }
 
   File f = LittleFS.open(SCHEDULE_FILE, FILE_WRITE);
-  if (!f) {
-    Serial.println("[ERROR] Kon schedule file niet openen voor schrijven.");
-    return false;
-  }
-
-  if (serializeJsonPretty(doc, f) == 0) {
-    Serial.println("[ERROR] Kon schedule JSON niet schrijven.");
-    f.close();
-    return false;
-  }
-
+  if (!f) return false;
+  bool ok = serializeJsonPretty(doc, f) > 0;
   f.close();
-  return true;
+  return ok;
 }
 
 bool loadSchedulerData() {
+  if (!fsReady) {
+    initDefaultData();
+    return false;
+  }
+
   if (!LittleFS.exists(SCHEDULE_FILE)) {
-    Serial.println("[INFO] Geen schedule bestand, defaults worden aangemaakt.");
     initDefaultData();
     return saveSchedulerData();
   }
 
   File f = LittleFS.open(SCHEDULE_FILE, FILE_READ);
   if (!f) {
-    Serial.println("[WARN] Schedule bestand kon niet gelezen worden. Defaults geladen.");
     initDefaultData();
     return false;
   }
@@ -199,9 +244,7 @@ bool loadSchedulerData() {
   DynamicJsonDocument doc(28672);
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-
   if (err) {
-    Serial.printf("[WARN] JSON parse error: %s. Defaults geladen.\n", err.c_str());
     initDefaultData();
     return false;
   }
@@ -217,8 +260,7 @@ bool loadSchedulerData() {
 
   for (uint8_t p = 0; p < gData.presetCount; ++p) {
     JsonObject jp = presets[p].as<JsonObject>();
-    const char *presetName = jp["name"] | "Preset";
-    gData.presets[p].name = String(presetName);
+    gData.presets[p].name = String((const char *)(jp["name"] | "Preset"));
 
     JsonArray channels = jp["channels"].as<JsonArray>();
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
@@ -241,15 +283,143 @@ bool loadSchedulerData() {
   return true;
 }
 
-float getMinuteOfDay() {
-  time_t now = time(nullptr);
-  if (now < 100000) {
-    return (millis() / 1000.0f) / 60.0f;
+bool saveWifiConfig(const WifiConfigData &cfg) {
+  if (!fsReady) return false;
+
+  DynamicJsonDocument doc(1024);
+  doc["ssid"] = cfg.ssid;
+  doc["password"] = cfg.password;
+
+  File f = LittleFS.open(WIFI_FILE, FILE_WRITE);
+  if (!f) return false;
+  bool ok = serializeJsonPretty(doc, f) > 0;
+  f.close();
+  return ok;
+}
+
+void loadWifiConfig(WifiConfigData &cfg) {
+  cfg.ssid = "";
+  cfg.password = "";
+
+  if (fsReady && LittleFS.exists(WIFI_FILE)) {
+    File f = LittleFS.open(WIFI_FILE, FILE_READ);
+    if (f) {
+      DynamicJsonDocument doc(1024);
+      DeserializationError err = deserializeJson(doc, f);
+      f.close();
+      if (!err) {
+        cfg.ssid = String((const char *)(doc["ssid"] | ""));
+        cfg.password = String((const char *)(doc["password"] | ""));
+      }
+    }
   }
 
-  struct tm localTime;
-  localtime_r(&now, &localTime);
-  return localTime.tm_hour * 60.0f + localTime.tm_min + (localTime.tm_sec / 60.0f);
+  if (!hasWifiCredentials(cfg)) {
+    cfg.ssid = String(WIFI_SSID);
+    cfg.password = String(WIFI_PASSWORD);
+    if (isPlaceholderSsid(cfg.ssid)) {
+      cfg.ssid = "";
+      cfg.password = "";
+    }
+  }
+}
+
+void startConfigAp() {
+  if (apModeActive) return;
+
+  WiFi.mode(WIFI_AP_STA);
+  const String ssid = apSsid();
+  if (!WiFi.softAP(ssid.c_str())) {
+    Serial.println("[AP] SoftAP start mislukt.");
+    return;
+  }
+
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  apModeActive = true;
+
+  Serial.printf("[AP] Setup AP actief: %s\n", ssid.c_str());
+  Serial.printf("[AP] AP IP: %s\n", WiFi.softAPIP().toString().c_str());
+}
+
+void stopConfigAp() {
+  if (!apModeActive) return;
+  dnsServer.stop();
+  WiFi.softAPdisconnect(true);
+  apModeActive = false;
+  Serial.println("[AP] Setup AP gestopt.");
+}
+
+bool connectWifiStation(uint16_t retryCycles = 80) {
+  if (!hasWifiCredentials(gWifiConfig)) {
+    Serial.println("[WIFI] Geen credentials.");
+    return false;
+  }
+
+  WiFi.setHostname(DEVICE_HOSTNAME);
+  WiFi.mode(apModeActive ? WIFI_AP_STA : WIFI_STA);
+  WiFi.begin(gWifiConfig.ssid.c_str(), gWifiConfig.password.c_str());
+
+  Serial.printf("[WIFI] Verbinden met %s", gWifiConfig.ssid.c_str());
+  for (uint16_t i = 0; i < retryCycles && WiFi.status() != WL_CONNECTED; ++i) {
+    delay(250);
+    Serial.print('.');
+  }
+  Serial.println();
+
+  if (wifiConnected()) {
+    Serial.printf("[WIFI] Verbonden. IP: %s\n", WiFi.localIP().toString().c_str());
+    return true;
+  }
+
+  Serial.println("[WIFI] Verbinden mislukt.");
+  return false;
+}
+
+void setupTimeSync() {
+  if (ntpConfigured) return;
+  setenv("TZ", TZ_INFO, 1);
+  tzset();
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
+  ntpConfigured = true;
+  Serial.println("[NTP] Tijd sync gestart.");
+}
+
+void setupOta() {
+  if (otaConfigured) return;
+
+  ArduinoOTA.setHostname(DEVICE_HOSTNAME);
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.onStart([]() { Serial.println("[OTA] Start"); });
+  ArduinoOTA.onEnd([]() { Serial.println("[OTA] Klaar"); });
+  ArduinoOTA.onError([](ota_error_t err) { Serial.printf("[OTA] Fout %u\n", err); });
+  ArduinoOTA.begin();
+  otaConfigured = true;
+  Serial.println("[OTA] Actief.");
+}
+
+void activateNetworkServicesIfConnected() {
+  if (!wifiConnected()) return;
+  setupTimeSync();
+  setupOta();
+}
+
+float getMinuteOfDay() {
+  if (ntpTimeValid()) {
+    time_t now = time(nullptr);
+    struct tm localTime;
+    localtime_r(&now, &localTime);
+    return localTime.tm_hour * 60.0f + localTime.tm_min + (localTime.tm_sec / 60.0f);
+  }
+
+  if (manualTimeActive) {
+    float minute = manualTimeBaseMinute + (millis() - manualTimeSetMs) / 60000.0f;
+    while (minute >= 1440.0f) minute -= 1440.0f;
+    return minute;
+  }
+
+  float minute = (millis() / 1000.0f) / 60.0f;
+  while (minute >= 1440.0f) minute -= 1440.0f;
+  return minute;
 }
 
 uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
@@ -280,16 +450,12 @@ uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
     b = &curve.points[0];
     segmentStart = a->minute;
     segmentEnd = b->minute + 1440.0f;
-    if (minute < curve.points[0].minute) {
-      minute += 1440.0f;
-    }
+    if (minute < curve.points[0].minute) minute += 1440.0f;
   }
 
   float span = segmentEnd - segmentStart;
   float t = (span > 0.0f) ? ((minute - segmentStart) / span) : 0.0f;
-  float eased = smoothStep(t);
-  float value = a->value + (b->value - a->value) * eased;
-
+  float value = a->value + (b->value - a->value) * smoothStep(t);
   return clampValue(static_cast<int>(roundf(value)));
 }
 
@@ -301,22 +467,21 @@ void writePwm(uint8_t channel, uint8_t value) {
 void updateOutputs() {
   if (gData.presetCount == 0) return;
 
-  float minute = getMinuteOfDay();
   const Preset &active = gData.presets[gData.activePreset];
+  float minute = getMinuteOfDay();
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    uint8_t out = evaluateCurve(active.channels[ch], minute);
-    currentOutputs[ch] = out;
-    writePwm(ch, out);
+    currentOutputs[ch] = evaluateCurve(active.channels[ch], minute);
+    writePwm(ch, currentOutputs[ch]);
   }
 }
 
 void printStatusToSerial() {
   float minute = getMinuteOfDay();
-  int hour = static_cast<int>(minute) / 60;
-  int min = static_cast<int>(minute) % 60;
+  int hh = static_cast<int>(minute) / 60;
+  int mm = static_cast<int>(minute) % 60;
 
-  Serial.printf("[STAT] Time %02d:%02d | Preset %u: %s | Out:", hour, min, gData.activePreset,
+  Serial.printf("[STAT] %02d:%02d | Preset %u: %s | Out:", hh, mm, gData.activePreset,
                 gData.presets[gData.activePreset].name.c_str());
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     Serial.printf(" ch%u=%u", ch + 1, currentOutputs[ch]);
@@ -328,17 +493,23 @@ String stateJson() {
   DynamicJsonDocument doc(32768);
   doc["activePreset"] = gData.activePreset;
   doc["nowMinute"] = getMinuteOfDay();
+  doc["wifiConnected"] = wifiConnected();
+  doc["ssid"] = wifiConnected() ? WiFi.SSID() : gWifiConfig.ssid;
+  doc["stationIp"] = wifiConnected() ? WiFi.localIP().toString() : "0.0.0.0";
+  doc["apMode"] = apModeActive;
+  doc["apIp"] = apModeActive ? WiFi.softAPIP().toString() : "0.0.0.0";
+  doc["ntpSynced"] = ntpTimeValid();
+  doc["manualTime"] = manualTimeActive;
 
   JsonArray out = doc.createNestedArray("outputs");
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    out.add(currentOutputs[ch]);
-  }
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
 
   JsonArray presets = doc.createNestedArray("presets");
   for (uint8_t p = 0; p < gData.presetCount; ++p) {
     JsonObject jp = presets.createNestedObject();
     jp["name"] = gData.presets[p].name;
     JsonArray channels = jp.createNestedArray("channels");
+
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
       JsonArray points = channels.createNestedArray();
       const ChannelCurve &curve = gData.presets[p].channels[ch];
@@ -366,19 +537,14 @@ void handleGetState() {
 }
 
 bool parsePresetFromJson(JsonVariantConst root, Preset &outPreset) {
-  const char *name = root["name"] | "Preset";
-  outPreset.name = String(name);
+  outPreset.name = String((const char *)(root["name"] | "Preset"));
 
   JsonArrayConst channels = root["channels"].as<JsonArrayConst>();
-  if (channels.isNull() || channels.size() != LED_CHANNEL_COUNT) {
-    return false;
-  }
+  if (channels.isNull() || channels.size() != LED_CHANNEL_COUNT) return false;
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     JsonArrayConst points = channels[ch].as<JsonArrayConst>();
-    if (points.isNull() || points.size() == 0) {
-      return false;
-    }
+    if (points.isNull() || points.size() == 0) return false;
 
     ChannelCurve &curve = outPreset.channels[ch];
     curve.pointCount = 0;
@@ -397,13 +563,11 @@ bool parsePresetFromJson(JsonVariantConst root, Preset &outPreset) {
 
 void handlePresetUpsert() {
   DynamicJsonDocument body(28672);
-  DeserializationError err = deserializeJson(body, server.arg("plain"));
-  if (err) {
+  if (deserializeJson(body, server.arg("plain"))) {
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
     resp["error"] = "invalid json";
-    sendJson(400, resp);
-    return;
+    return sendJson(400, resp);
   }
 
   Preset p;
@@ -411,8 +575,7 @@ void handlePresetUpsert() {
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
     resp["error"] = "invalid preset payload";
-    sendJson(400, resp);
-    return;
+    return sendJson(400, resp);
   }
 
   int index = body["index"] | -1;
@@ -423,8 +586,7 @@ void handlePresetUpsert() {
       DynamicJsonDocument resp(256);
       resp["ok"] = false;
       resp["error"] = "max presets reached";
-      sendJson(400, resp);
-      return;
+      return sendJson(400, resp);
     }
     gData.presets[gData.presetCount] = p;
     gData.activePreset = gData.presetCount;
@@ -435,8 +597,7 @@ void handlePresetUpsert() {
       DynamicJsonDocument resp(256);
       resp["ok"] = false;
       resp["error"] = "preset index out of range";
-      sendJson(400, resp);
-      return;
+      return sendJson(400, resp);
     }
     gData.presets[index] = p;
     gData.activePreset = index;
@@ -453,13 +614,11 @@ void handlePresetUpsert() {
 
 void handlePresetSelect() {
   DynamicJsonDocument body(512);
-  DeserializationError err = deserializeJson(body, server.arg("plain"));
-  if (err) {
+  if (deserializeJson(body, server.arg("plain"))) {
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
     resp["error"] = "invalid json";
-    sendJson(400, resp);
-    return;
+    return sendJson(400, resp);
   }
 
   int index = body["index"] | 0;
@@ -467,8 +626,7 @@ void handlePresetSelect() {
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
     resp["error"] = "preset index out of range";
-    sendJson(400, resp);
-    return;
+    return sendJson(400, resp);
   }
 
   gData.activePreset = index;
@@ -480,13 +638,94 @@ void handlePresetSelect() {
   sendJson(200, resp);
 }
 
+void handleWifiSave() {
+  DynamicJsonDocument body(1024);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  String ssid = String((const char *)(body["ssid"] | ""));
+  String password = String((const char *)(body["password"] | ""));
+  ssid.trim();
+
+  if (ssid.isEmpty()) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "ssid required";
+    return sendJson(400, resp);
+  }
+
+  gWifiConfig.ssid = ssid;
+  gWifiConfig.password = password;
+  saveWifiConfig(gWifiConfig);
+
+  bool connected = connectWifiStation(60);
+  if (connected) {
+    activateNetworkServicesIfConnected();
+    stopConfigAp();
+  } else {
+    startConfigAp();
+  }
+
+  DynamicJsonDocument resp(512);
+  resp["ok"] = true;
+  resp["connected"] = connected;
+  resp["apMode"] = apModeActive;
+  resp["stationIp"] = wifiConnected() ? WiFi.localIP().toString() : "0.0.0.0";
+  resp["apIp"] = apModeActive ? WiFi.softAPIP().toString() : "0.0.0.0";
+  sendJson(200, resp);
+}
+
+void handleTimeSet() {
+  DynamicJsonDocument body(512);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  int hour = body["hour"] | -1;
+  int minute = body["minute"] | -1;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid time";
+    return sendJson(400, resp);
+  }
+
+  setManualTime(static_cast<uint8_t>(hour), static_cast<uint8_t>(minute));
+
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["manualTime"] = true;
+  resp["nowMinute"] = getMinuteOfDay();
+  sendJson(200, resp);
+}
+
 void setupWebServer() {
+  if (WiFi.getMode() == WIFI_MODE_NULL) {
+    WiFi.mode(WIFI_STA);
+  }
+
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", INDEX_HTML); });
+  server.on("/settings", HTTP_GET, []() { server.send_P(200, "text/html", SETTINGS_HTML); });
+
   server.on("/api/state", HTTP_GET, handleGetState);
   server.on("/api/preset/upsert", HTTP_POST, handlePresetUpsert);
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
+  server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
+  server.on("/api/time/set", HTTP_POST, handleTimeSet);
 
   server.onNotFound([]() {
+    if (apModeActive) {
+      server.sendHeader("Location", "/settings", true);
+      server.send(302, "text/plain", "");
+      return;
+    }
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
     resp["error"] = "not found";
@@ -507,49 +746,25 @@ void setupPwm() {
   Serial.println("[PWM] Init klaar.");
 }
 
-void connectWifi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname(DEVICE_HOSTNAME);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+void ensureWifiLink() {
+  const unsigned long now = millis();
+  if (wifiConnected()) return;
+  if (now - lastWifiRetryMs < WIFI_RETRY_MS) return;
+  lastWifiRetryMs = now;
 
-  Serial.printf("[WIFI] Verbinden met %s", WIFI_SSID);
-  int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 80) {
-    delay(250);
-    Serial.print(".");
-    retry++;
+  if (!hasWifiCredentials(gWifiConfig)) {
+    startConfigAp();
+    return;
   }
-  Serial.println();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[WIFI] Verbonden. IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.println("[WIFI] Reconnect poging...");
+  bool connected = connectWifiStation(20);
+  if (connected) {
+    activateNetworkServicesIfConnected();
+    stopConfigAp();
   } else {
-    Serial.println("[WIFI] Niet verbonden. Webinterface/OTA niet beschikbaar.");
+    startConfigAp();
   }
-}
-
-void setupTimeSync() {
-  setenv("TZ", TZ_INFO, 1);
-  tzset();
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
-  Serial.println("[NTP] Tijd synchronisatie gestart.");
-}
-
-void setupOta() {
-  ArduinoOTA.setHostname(DEVICE_HOSTNAME);
-  ArduinoOTA.setPassword(OTA_PASSWORD);
-
-  ArduinoOTA.onStart([]() { Serial.println("[OTA] Start update"); });
-  ArduinoOTA.onEnd([]() { Serial.println("[OTA] Update klaar"); });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("[OTA] %u%%\r", (progress * 100U) / total);
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("[OTA] Fout %u\n", error);
-  });
-
-  ArduinoOTA.begin();
-  Serial.println("[OTA] OTA service actief.");
 }
 
 void printCliHelp() {
@@ -558,6 +773,8 @@ void printCliHelp() {
   Serial.println("  status              - toon live status");
   Serial.println("  list                - toon presets");
   Serial.println("  select <i>          - activeer preset index");
+  Serial.println("  settime HH:MM       - handmatige tijd instellen");
+  Serial.println("  ap on|off           - setup AP aan/uit");
   Serial.println("  debug on|off        - periodieke debug output aan/uit");
   Serial.println("  save                - forceer opslag van schedule");
   Serial.println("  wifi                - toon wifi status");
@@ -585,6 +802,24 @@ void handleCliCommand(String cmd) {
     } else {
       Serial.println("[CLI] Ongeldige preset index.");
     }
+  } else if (cmd.startsWith("settime ")) {
+    String t = cmd.substring(8);
+    int sep = t.indexOf(':');
+    if (sep > 0) {
+      int hh = t.substring(0, sep).toInt();
+      int mm = t.substring(sep + 1).toInt();
+      if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+        setManualTime(static_cast<uint8_t>(hh), static_cast<uint8_t>(mm));
+      } else {
+        Serial.println("[CLI] Ongeldige tijd, gebruik HH:MM.");
+      }
+    } else {
+      Serial.println("[CLI] Formaat: settime HH:MM");
+    }
+  } else if (cmd == "ap on") {
+    startConfigAp();
+  } else if (cmd == "ap off") {
+    stopConfigAp();
   } else if (cmd == "debug on") {
     debugEnabled = true;
     Serial.println("[CLI] Debug output ingeschakeld.");
@@ -594,7 +829,8 @@ void handleCliCommand(String cmd) {
   } else if (cmd == "save") {
     Serial.printf("[CLI] Save %s\n", saveSchedulerData() ? "ok" : "failed");
   } else if (cmd == "wifi") {
-    Serial.printf("[CLI] WiFi status: %d, IP: %s\n", WiFi.status(), WiFi.localIP().toString().c_str());
+    Serial.printf("[CLI] WiFi status: %d, STA IP: %s, AP: %s\n", WiFi.status(),
+                  WiFi.localIP().toString().c_str(), apModeActive ? WiFi.softAPIP().toString().c_str() : "off");
   } else {
     Serial.println("[CLI] Onbekend commando, gebruik help.");
   }
@@ -610,9 +846,7 @@ void handleSerialCli() {
       }
     } else if (isPrintable(static_cast<unsigned char>(c))) {
       cliBuffer += c;
-      if (cliBuffer.length() > 120) {
-        cliBuffer = cliBuffer.substring(0, 120);
-      }
+      if (cliBuffer.length() > 120) cliBuffer = cliBuffer.substring(0, 120);
     }
   }
 }
@@ -630,23 +864,35 @@ void setup() {
   Serial.println("[BOOT] LittleFS.begin");
   fsReady = LittleFS.begin(false);
   if (!fsReady) {
-    Serial.println("[FS] LittleFS mount mislukt (zonder auto-format). Defaults gebruikt.");
-    initDefaultData();
+    Serial.println("[FS] LittleFS mount mislukt, probeer format...");
+    fsReady = LittleFS.begin(true);
+    if (!fsReady) {
+      Serial.println("[FS] Format+mount mislukt. Defaults gebruikt zonder persistente opslag.");
+      initDefaultData();
+    } else {
+      Serial.println("[FS] LittleFS geformatteerd en gemount.");
+      initDefaultData();
+      saveSchedulerData();
+    }
   } else {
     Serial.println("[FS] LittleFS actief.");
-    Serial.println("[BOOT] loadSchedulerData");
     loadSchedulerData();
   }
 
-  Serial.println("[BOOT] connectWifi");
-  connectWifi();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("[BOOT] setupTimeSync");
-    setupTimeSync();
-    Serial.println("[BOOT] setupOta");
-    setupOta();
-    Serial.println("[BOOT] setupWebServer");
-    setupWebServer();
+  Serial.println("[BOOT] loadWifiConfig");
+  loadWifiConfig(gWifiConfig);
+
+  WiFi.mode(WIFI_STA);
+
+  Serial.println("[BOOT] setupWebServer");
+  setupWebServer();
+
+  Serial.println("[BOOT] connectWifiStation");
+  bool connected = connectWifiStation();
+  if (connected) {
+    activateNetworkServicesIfConnected();
+  } else {
+    startConfigAp();
   }
 
   printCliHelp();
@@ -654,20 +900,21 @@ void setup() {
 }
 
 void loop() {
-  if (WiFi.status() == WL_CONNECTED) {
-    ArduinoOTA.handle();
-    server.handleClient();
-  }
+  server.handleClient();
 
+  if (apModeActive) dnsServer.processNextRequest();
+  if (wifiConnected() && otaConfigured) ArduinoOTA.handle();
+
+  ensureWifiLink();
   handleSerialCli();
 
   const unsigned long now = millis();
-  if (now - lastPwmUpdateMs >= 250) {
+  if (now - lastPwmUpdateMs >= PWM_UPDATE_MS) {
     lastPwmUpdateMs = now;
     updateOutputs();
   }
 
-  if (debugEnabled && now - lastDebugMs >= 5000) {
+  if (debugEnabled && now - lastDebugMs >= DEBUG_PRINT_MS) {
     lastDebugMs = now;
     printStatusToSerial();
   }
