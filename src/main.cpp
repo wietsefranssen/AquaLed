@@ -22,7 +22,7 @@ constexpr uint8_t MAX_PRESETS = 10;
 constexpr char SCHEDULE_FILE[] = "/schedule.json";
 constexpr char WIFI_FILE[] = "/wifi.json";
 
-constexpr unsigned long PWM_UPDATE_MS = 250;
+constexpr unsigned long PWM_UPDATE_MS = 50;
 constexpr unsigned long DEBUG_PRINT_MS = 5000;
 constexpr unsigned long WIFI_RETRY_MS = 20000;
 constexpr byte DNS_PORT = 53;
@@ -77,6 +77,7 @@ unsigned long simulationStartMs = 0;
 uint16_t simulationDaySeconds = 120;
 
 uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
+float smoothOutputs[LED_CHANNEL_COUNT] = {0};
 unsigned long lastPwmUpdateMs = 0;
 unsigned long lastDebugMs = 0;
 unsigned long lastWifiRetryMs = 0;
@@ -572,14 +573,26 @@ void writePwm(uint8_t channel, uint8_t value) {
 }
 
 void updateOutputs() {
+  constexpr float MAX_STEP = 1.0f;
+
   if (gData.presetCount == 0) return;
 
   const Preset &active = gData.presets[gData.activePreset];
   float minute = getMinuteOfDay();
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    currentOutputs[ch] = evaluateCurve(active.channels[ch], minute);
-    writePwm(ch, currentOutputs[ch]);
+    float target = static_cast<float>(evaluateCurve(active.channels[ch], minute));
+    float diff = target - smoothOutputs[ch];
+    if (fabsf(diff) <= MAX_STEP) {
+      smoothOutputs[ch] = target;
+    } else {
+      smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
+    }
+    uint8_t out = static_cast<uint8_t>(roundf(smoothOutputs[ch]));
+    if (out != currentOutputs[ch]) {
+      currentOutputs[ch] = out;
+      writePwm(ch, out);
+    }
   }
 }
 

@@ -36,11 +36,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <div class="card toolbar">
     <label for="presetSelect">Preset</label>
     <select id="presetSelect"></select>
-    <button id="btnLoad">Laad</button>
     <input id="presetName" placeholder="Naam nieuwe preset">
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
-    <button id="btnApply" class="primary">Activeren</button>
     <span id="status" class="status">Klaar</span>
   </div>
 
@@ -89,10 +87,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   const el = {
     presetSelect: document.getElementById("presetSelect"),
     presetName: document.getElementById("presetName"),
-    btnLoad: document.getElementById("btnLoad"),
     btnSaveNew: document.getElementById("btnSaveNew"),
     btnOverwrite: document.getElementById("btnOverwrite"),
-    btnApply: document.getElementById("btnApply"),
     status: document.getElementById("status"),
     channels: document.getElementById("channels"),
     live: document.getElementById("live"),
@@ -407,11 +403,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     await loadState();
     setStatus("Verbonden", false);
 
-    el.btnLoad.onclick = () => {
+    el.presetSelect.onchange = async () => {
       const idx = Number(el.presetSelect.value || 0);
-      state.working = clone(state.presets[idx]);
-      render();
-      setStatus("Preset geladen", false);
+      try {
+        await api("/api/preset/select", "POST", { index: idx });
+        await loadState();
+        setStatus("Preset geladen", false);
+      } catch (e) {
+        setStatus("Laden mislukt: " + e.message, true);
+      }
     };
 
     el.btnSaveNew.onclick = async () => {
@@ -427,16 +427,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         setStatus("Preset overschreven", false);
       } catch (e) {
         setStatus("Opslaan mislukt: " + e.message, true);
-      }
-    };
-
-    el.btnApply.onclick = async () => {
-      try {
-        await api("/api/preset/select", "POST", { index: Number(el.presetSelect.value || 0) });
-        await loadState();
-        setStatus("Preset actief", false);
-      } catch (e) {
-        setStatus("Activeren mislukt: " + e.message, true);
       }
     };
 
