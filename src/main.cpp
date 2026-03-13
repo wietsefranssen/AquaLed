@@ -1059,6 +1059,50 @@ void handlePresetSelect() {
   sendJson(200, resp);
 }
 
+void handlePresetDelete() {
+  DynamicJsonDocument body(512);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  int index = body["index"] | -1;
+  if (index < 0 || index >= gData.presetCount) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "preset index out of range";
+    return sendJson(400, resp);
+  }
+
+  if (gData.presetCount <= 1) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "kan laatste preset niet verwijderen";
+    return sendJson(400, resp);
+  }
+
+  for (uint8_t i = index; i < gData.presetCount - 1; ++i) {
+    gData.presets[i] = gData.presets[i + 1];
+  }
+  gData.presetCount--;
+
+  if (gData.activePreset >= gData.presetCount) {
+    gData.activePreset = gData.presetCount - 1;
+  } else if (gData.activePreset > index) {
+    gData.activePreset--;
+  }
+
+  saveSchedulerData();
+
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["presetCount"] = gData.presetCount;
+  resp["activePreset"] = gData.activePreset;
+  sendJson(200, resp);
+}
+
 void handleWifiSave() {
   DynamicJsonDocument body(1024);
   if (deserializeJson(body, server.arg("plain"))) {
@@ -1355,6 +1399,7 @@ void setupWebServer() {
   server.on("/api/preview/set", HTTP_POST, handlePreviewSet);
   server.on("/api/preset/upsert", HTTP_POST, handlePresetUpsert);
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
+  server.on("/api/preset/delete", HTTP_POST, handlePresetDelete);
   server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
   server.on("/api/time/set", HTTP_POST, handleTimeSet);
   server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);

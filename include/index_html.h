@@ -56,6 +56,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <input id="presetName" placeholder="Naam nieuwe preset">
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
+    <button id="btnDelete" style="color:#922b21;border-color:#e6a19a;">Verwijder</button>
     <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Export</button>
     <button id="btnImport" title="Importeer presets uit JSON-bestand">⬆ Import</button>
     <input id="fileImport" type="file" accept=".json" style="display:none">
@@ -122,6 +123,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     presetName: document.getElementById("presetName"),
     btnSaveNew: document.getElementById("btnSaveNew"),
     btnOverwrite: document.getElementById("btnOverwrite"),
+    btnDelete: document.getElementById("btnDelete"),
     status: document.getElementById("status"),
     channels: document.getElementById("channels"),
     live: document.getElementById("live"),
@@ -356,6 +358,26 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     return best;
   }
 
+  let _previewDebounce = null;
+  function sendPreviewDebounced(minute) {
+    if (_previewDebounce) clearTimeout(_previewDebounce);
+    _previewDebounce = setTimeout(async () => {
+      try { await api("/api/preview/set", "POST", { enabled: true, minute }); } catch(_){}
+    }, 80);
+  }
+
+  function activatePointPreview(minute) {
+    state.previewMinute = minute;
+    const preset = state.working || state.presets[state.activePreset];
+    if (preset && preset.channels) {
+      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
+    }
+    el.previewSlider.value = minute;
+    el.previewTime.textContent = fmtMin(minute);
+    render();
+    sendPreviewDebounced(minute);
+  }
+
   function bindCanvas(c, idx) {
     c.addEventListener("contextmenu", e => e.preventDefault());
 
@@ -369,9 +391,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
       if (e.button === 2) {
         if (hit >= 0 && pts.length > 2) {
+          const delMinute = pts[hit].minute;
           pts.splice(hit, 1);
           state.working.channels[idx] = sortAndClamp(pts);
-          draw(idx);
+          activatePointPreview(delMinute);
         }
         return;
       }
@@ -391,7 +414,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const inserted = nearest(state.working.channels[idx], x, y, r.width, r.height);
         state.dragging = { idx, point: Math.max(0, inserted) };
       }
-      draw(idx);
+      activatePointPreview(minute);
     });
 
     c.addEventListener("pointermove", (e) => {
@@ -406,10 +429,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       p.value = yToValue(y, r.height);
       state.working.channels[idx] = sortAndClamp(pts);
       state.dragging.point = nearest(state.working.channels[idx], x, y, r.width, r.height);
-      draw(idx);
+      activatePointPreview(p.minute);
     });
 
-    c.addEventListener("pointerup", () => { state.dragging = null; });
+    c.addEventListener("pointerup", async () => {
+      if (state.dragging && state.previewMinute !== null) {
+        try { await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute }); } catch(_){}
+      }
+      state.dragging = null;
+    });
     c.addEventListener("pointerleave", () => { state.dragging = null; });
   }
 
@@ -510,6 +538,20 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         setStatus("Preset overschreven", false);
       } catch (e) {
         setStatus("Opslaan mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnDelete.onclick = async () => {
+      const idx = Number(el.presetSelect.value || 0);
+      const name = state.presets[idx]?.name || "Preset";
+      if (state.presets.length <= 1) { setStatus("Laatste preset kan niet verwijderd worden", true); return; }
+      if (!confirm(`Preset "${name}" verwijderen?`)) return;
+      try {
+        await api("/api/preset/delete", "POST", { index: idx });
+        await loadState();
+        setStatus("Preset verwijderd", false);
+      } catch (e) {
+        setStatus("Verwijderen mislukt: " + e.message, true);
       }
     };
 
