@@ -113,6 +113,37 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     </section>
 
     <section class="card">
+      <h2>Home Assistant (MQTT)</h2>
+      <div class="sub">Verbind met een MQTT broker voor HA auto-discovery. Entiteiten verschijnen automatisch in Home Assistant: master-schakelaar, simulatie, preset-keuze en 5 kanaal-sensoren.<br>Tip: gebruik de Mosquitto add-on in HA en maak een MQTT-gebruiker aan.</div>
+      <div class="row" style="margin-top:10px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <label style="margin:0;width:auto">MQTT inschakelen</label>
+          <input id="mqttEnabled" type="checkbox" style="width:auto;accent-color:var(--brand);">
+        </div>
+        <div>
+          <label for="mqttBroker">Broker adres</label>
+          <input id="mqttBroker" placeholder="192.168.1.x of hostname">
+        </div>
+        <div>
+          <label for="mqttPort">Poort</label>
+          <input id="mqttPort" type="number" value="1883" min="1" max="65535" placeholder="1883">
+        </div>
+        <div>
+          <label for="mqttUser">Gebruikersnaam (optioneel)</label>
+          <input id="mqttUser" placeholder="MQTT gebruikersnaam">
+        </div>
+        <div>
+          <label for="mqttPass">Wachtwoord (optioneel)</label>
+          <input id="mqttPass" type="password" placeholder="MQTT wachtwoord">
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button id="btnMqttSave" class="primary">Opslaan en verbinden</button>
+      </div>
+      <div id="mqttStatus" class="status">Nog niet geladen</div>
+    </section>
+
+    <section class="card">
       <h2>Tijd</h2>
       <div class="row two">
         <div>
@@ -189,7 +220,14 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     btnColorSave: document.getElementById("btnColorSave"),
     colorStatus: document.getElementById("colorStatus"),
     timezone: document.getElementById("timezone"),
-    tzStatus: document.getElementById("tzStatus")
+    tzStatus: document.getElementById("tzStatus"),
+    mqttEnabled: document.getElementById("mqttEnabled"),
+    mqttBroker:  document.getElementById("mqttBroker"),
+    mqttPort:    document.getElementById("mqttPort"),
+    mqttUser:    document.getElementById("mqttUser"),
+    mqttPass:    document.getElementById("mqttPass"),
+    btnMqttSave: document.getElementById("btnMqttSave"),
+    mqttStatus:  document.getElementById("mqttStatus")
   };
 
   const Api = {
@@ -207,7 +245,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     state() { return this.call("/api/state"); },
     saveWifi(payload) { return this.call("/api/wifi/save", "POST", payload); },
     setTime(payload) { return this.call("/api/time/set", "POST", payload); },
-    saveColors(payload) { return this.call("/api/colors/save", "POST", payload); }
+    saveColors(payload) { return this.call("/api/colors/save", "POST", payload); },
+    saveMqtt(payload)   { return this.call("/api/mqtt/save",   "POST", payload); }
   };
 
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
@@ -243,6 +282,10 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   function renderState(s) {
     if (s.ssid) el.ssid.value = s.ssid;
     if (typeof s.otaPassword === "string") el.otaPassword.value = s.otaPassword;
+    el.mqttEnabled.checked = !!s.mqttEnabled;
+    if (s.mqttBroker)   el.mqttBroker.value = s.mqttBroker;
+    if (s.mqttPort)     el.mqttPort.value   = s.mqttPort;
+    if (s.mqttUsername) el.mqttUser.value   = s.mqttUsername;
     if (s.timezone) {
       const opts = el.timezone.options;
       let found = false;
@@ -266,6 +309,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "apMode: " + (!!s.apMode) + "\n" +
       "apIp: " + (s.apIp || "0.0.0.0") + "\n" +
       "otaPassword: " + ((s.otaPassword || "").length ? "ingesteld" : "leeg") + "\n" +
+      "mqtt: " + (s.mqttEnabled ? (s.mqttConnected ? "verbonden (" + (s.mqttBroker || "-") + ")" : "ingeschakeld (niet verbonden)") : "uitgeschakeld") + "\n" +
+      "mqttDeviceId: " + (s.mqttDeviceId || "-") + "\n" +
       "ntpSynced: " + (!!s.ntpSynced) + "\n" +
       "manualTime: " + (!!s.manualTime) + "\n" +
       "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
@@ -276,6 +321,27 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     renderState(s);
     setStatus(el.wifiStatus, s.wifiConnected ? "Wifi verbonden" : "Wifi niet verbonden", s.wifiConnected ? "ok" : "");
     setStatus(el.timeStatus, s.ntpSynced ? "NTP tijd actief" : (s.manualTime ? "Handmatige tijd actief" : "Fallback tijd (uptime)"), s.ntpSynced || s.manualTime ? "ok" : "");
+    setStatus(el.mqttStatus,
+      !s.mqttEnabled  ? "MQTT uitgeschakeld" :
+      s.mqttConnected ? "Verbonden met " + (s.mqttBroker || "-") + " (id: " + (s.mqttDeviceId || "-") + ")" :
+                        "MQTT ingeschakeld, niet verbonden",
+      s.mqttEnabled && !s.mqttConnected ? "err" : (s.mqttConnected ? "ok" : ""));
+  }
+
+  async function saveMqtt() {
+    try {
+      const out = await Api.saveMqtt({
+        enabled:  el.mqttEnabled.checked,
+        broker:   el.mqttBroker.value.trim(),
+        port:     Number(el.mqttPort.value) || 1883,
+        username: el.mqttUser.value.trim(),
+        password: el.mqttPass.value
+      });
+      setStatus(el.mqttStatus, out.ok ? "MQTT instellingen opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
+      await refresh();
+    } catch (e) {
+      setStatus(el.mqttStatus, "Opslaan mislukt: " + e.message, "err");
+    }
   }
 
   async function saveWifi() {
@@ -320,8 +386,9 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
   function bind() {
     el.btnWifiSave.onclick = saveWifi;
-    el.btnTimeSet.onclick = setTime;
+    el.btnTimeSet.onclick  = setTime;
     el.btnColorSave.onclick = saveColors;
+    el.btnMqttSave.onclick  = saveMqtt;
     el.timezone.onchange = async () => {
       try {
         await Api.saveWifi({

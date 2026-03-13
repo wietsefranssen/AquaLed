@@ -28,6 +28,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <div class="card">
     <div class="toolbar">
       <a href="/settings">Naar instellingen</a>
+      <button id="btnMasterToggle" class="primary" style="margin-left:auto;min-width:96px;">● AAN</button>
     </div>
     <h2>AquaLed Dagcurve Controller</h2>
     <div>Curve is smooth. Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
@@ -84,6 +85,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     dateTime: "-",
     simulationActive: false,
     simulationDaySeconds: 120,
+    masterEnabled: true,
     previewMinute: null,
     working: null,
     dragging: null,
@@ -105,7 +107,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     simState: document.getElementById("simState"),
     previewSlider: document.getElementById("previewSlider"),
     previewTime: document.getElementById("previewTime"),
-    btnPreviewReset: document.getElementById("btnPreviewReset")
+    btnPreviewReset: document.getElementById("btnPreviewReset"),
+    btnMasterToggle: document.getElementById("btnMasterToggle")
   };
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -269,6 +272,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     const mm = Math.floor(displayMin % 60);
     el.live.textContent =
       "Preset: " + (state.presets[state.activePreset]?.name || "-") + "\n" +
+      "Master: " + (state.masterEnabled ? "AAN" : "UIT") + "\n" +
       "Datum/tijd: " + (state.dateTime || "-") + "\n" +
       "Tijd (minuut): " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
       "Simulatie: " + (state.simulationActive ? ("aan (1 dag / " + state.simulationDaySeconds + "s)") : "uit") + "\n" +
@@ -276,6 +280,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
+
+    el.btnMasterToggle.textContent = state.masterEnabled ? "● AAN" : "● UIT";
+    el.btnMasterToggle.style.background  = state.masterEnabled ? "" : "#c0392b";
+    el.btnMasterToggle.style.borderColor = state.masterEnabled ? "" : "#922b21";
 
     if (state.previewMinute !== null) {
       const ph = Math.floor(state.previewMinute / 60);
@@ -382,6 +390,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.simulationDaySeconds = Number(s.simulationDaySeconds || 120);
     if (Array.isArray(s.channelColors) && s.channelColors.length === CHANNELS)
       state.colors = s.channelColors;
+    state.masterEnabled = s.masterEnabled !== false;
   }
 
   async function loadState() {
@@ -472,6 +481,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         setStatus("Simulatie gestopt", false);
       } catch (e) {
         setStatus("Simulatie stoppen mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnMasterToggle.onclick = async () => {
+      try {
+        const next = !state.masterEnabled;
+        await api("/api/master/set", "POST", { enabled: next });
+        const s = await api("/api/state");
+        mergeState(s);
+        render();
+        setStatus("Master " + (next ? "ingeschakeld" : "uitgeschakeld"), false);
+      } catch (e) {
+        setStatus("Master toggle mislukt: " + e.message, true);
       }
     };
 

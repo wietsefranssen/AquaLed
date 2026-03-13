@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include <LittleFS.h>
 #include <WebServer.h>
+#include <PubSubClient.h>
 #include <WiFi.h>
 #include <time.h>
 
@@ -21,6 +22,7 @@ constexpr uint8_t MAX_POINTS = 16;
 constexpr uint8_t MAX_PRESETS = 10;
 constexpr char SCHEDULE_FILE[] = "/schedule.json";
 constexpr char WIFI_FILE[] = "/wifi.json";
+constexpr char MQTT_FILE[] = "/mqtt.json";
 
 constexpr unsigned long PWM_UPDATE_MS = 50;
 constexpr unsigned long DEBUG_PRINT_MS = 5000;
@@ -56,6 +58,14 @@ struct WifiConfigData {
   String timezone;
 };
 
+struct MqttConfigData {
+  bool     enabled  = false;
+  String   broker;
+  uint16_t port     = 1883;
+  String   username;
+  String   password;
+};
+
 SchedulerData gData{};
 WifiConfigData gWifiConfig{};
 WebServer server(80);
@@ -80,6 +90,13 @@ uint16_t simulationDaySeconds = 120;
 
 uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 float smoothOutputs[LED_CHANNEL_COUNT] = {0};
+bool masterEnabled = true;
+MqttConfigData gMqttConfig{};
+WiFiClient     mqttWifiClient;
+PubSubClient   mqttClient(mqttWifiClient);
+unsigned long lastMqttPublishMs   = 0;
+unsigned long lastMqttReconnectMs = 0;
+
 unsigned long lastPwmUpdateMs = 0;
 unsigned long lastDebugMs = 0;
 unsigned long lastWifiRetryMs = 0;
@@ -367,6 +384,45 @@ void loadWifiConfig(WifiConfigData &cfg) {
   }
 }
 
+// ─── MQTT Config ──────────────────────────────────────────────────────────────
+
+bool saveMqttConfig() {
+  if (!fsReady) return false;
+  DynamicJsonDocument doc(1024);
+  doc["enabled"]  = gMqttConfig.enabled;
+  doc["broker"]   = gMqttConfig.broker;
+  doc["port"]     = gMqttConfig.port;
+  doc["username"] = gMqttConfig.username;
+  doc["password"] = gMqttConfig.password;
+  File f = LittleFS.open(MQTT_FILE, FILE_WRITE);
+  if (!f) return false;
+  bool ok = serializeJsonPretty(doc, f) > 0;
+  f.close();
+  return ok;
+}
+
+void loadMqttConfig() {
+  gMqttConfig = MqttConfigData{};
+  if (!fsReady || !LittleFS.exists(MQTT_FILE)) return;
+  File f = LittleFS.open(MQTT_FILE, FILE_READ);
+  if (!f) return;
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, f)) { f.close(); return; }
+  f.close();
+  gMqttConfig.enabled  = doc["enabled"]  | false;
+  gMqttConfig.broker   = String((const char *)(doc["broker"]   | ""));
+  gMqttConfig.port     = doc["port"]     | 1883;
+  gMqttConfig.username = String((const char *)(doc["username"] | ""));
+  gMqttConfig.password = String((const char *)(doc["password"] | ""));
+}
+
+String mqttDeviceId() {
+  const uint64_t mac = ESP.getEfuseMac();
+  char buf[7];
+  snprintf(buf, sizeof(buf), "%06lx", static_cast<unsigned long>(mac & 0xFFFFFF));
+  return String(buf);
+}
+
 void startConfigAp() {
   if (apModeActive) return;
 
@@ -470,10 +526,14 @@ void setupOta() {
   Serial.println("[OTA] Actief.");
 }
 
+// Forward declaration (setupMqtt defined after setSimulation block)
+void setupMqtt();
+
 void activateNetworkServicesIfConnected() {
   if (!wifiConnected()) return;
   setupTimeSync();
   setupOta();
+  setupMqtt();
 }
 
 float getBaseMinuteOfDay() {
@@ -554,6 +614,170 @@ void setSimulation(bool enabled, int daySeconds) {
   saveSchedulerData();
 }
 
+// ─── MQTT Runtime ─────────────────────────────────────────────────────────────
+
+void mqttPublishState() {
+  if (!mqttClient.connected()) return;
+  const String id = mqttDeviceId();
+  DynamicJsonDocument doc(512);
+  doc["masterEnabled"]        = masterEnabled;
+  doc["simulationActive"]     = simulationActive;
+  doc["simulationDaySeconds"] = simulationDaySeconds;
+  doc["activePreset"]         = gData.activePreset;
+  doc["presetName"]           = gData.presetCount > 0
+                                    ? gData.presets[gData.activePreset].name
+                                    : String("");
+  doc["nowMinute"]            = getMinuteOfDay();
+  JsonArray outs = doc.createNestedArray("outputs");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outs.add(currentOutputs[ch]);
+  String payload;
+  serializeJson(doc, payload);
+  mqttClient.publish(("aqualed/" + id + "/state").c_str(), payload.c_str(), true);
+}
+
+void mqttPublishDiscovery() {
+  if (!mqttClient.connected()) return;
+  const String id   = mqttDeviceId();
+  const String base = "aqualed/" + id;
+  const String avty = base + "/available";
+
+  auto addDev = [&](DynamicJsonDocument &d) {
+    JsonObject dev = d.createNestedObject("dev");
+    JsonArray  ids = dev.createNestedArray("ids");
+    ids.add(id);
+    dev["name"] = String(DEVICE_HOSTNAME);
+    dev["mdl"]  = "AquaLed Controller";
+    dev["mf"]   = "DIY";
+  };
+
+  auto pub = [&](const String &type, const String &slug, DynamicJsonDocument &d) {
+    const String topic = "homeassistant/" + type + "/" + id + "_" + slug + "/config";
+    String buf;
+    serializeJson(d, buf);
+    if (!mqttClient.publish(topic.c_str(), buf.c_str(), true))
+      Serial.printf("[MQTT] Discovery mislukt: %s (%u bytes)\n", slug.c_str(), buf.length());
+    yield();
+  };
+
+  { // Master schakelaar
+    DynamicJsonDocument d(512);
+    d["name"]    = "AquaLed Master";
+    d["uniq_id"] = id + "_master";
+    d["stat_t"]  = base + "/state";
+    d["val_tpl"] = "{{ 'ON' if value_json.masterEnabled else 'OFF' }}";
+    d["cmd_t"]   = base + "/master/set";
+    d["avty_t"]  = avty;
+    addDev(d);
+    pub("switch", "master", d);
+  }
+  { // Simulatie schakelaar
+    DynamicJsonDocument d(512);
+    d["name"]    = "AquaLed Simulatie";
+    d["uniq_id"] = id + "_simulation";
+    d["stat_t"]  = base + "/state";
+    d["val_tpl"] = "{{ 'ON' if value_json.simulationActive else 'OFF' }}";
+    d["cmd_t"]   = base + "/simulation/set";
+    d["avty_t"]  = avty;
+    addDev(d);
+    pub("switch", "simulation", d);
+  }
+  { // Preset selectie
+    DynamicJsonDocument d(1024);
+    d["name"]    = "AquaLed Preset";
+    d["uniq_id"] = id + "_preset";
+    d["stat_t"]  = base + "/state";
+    d["val_tpl"] = "{{ value_json.presetName }}";
+    d["cmd_t"]   = base + "/preset/set";
+    d["avty_t"]  = avty;
+    JsonArray opts = d.createNestedArray("options");
+    for (uint8_t i = 0; i < gData.presetCount; ++i) opts.add(gData.presets[i].name);
+    addDev(d);
+    pub("select", "preset", d);
+  }
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) { // Kanaal sensoren
+    DynamicJsonDocument d(512);
+    d["name"]    = String("AquaLed Kanaal ") + (ch + 1);
+    d["uniq_id"] = id + "_ch" + (ch + 1);
+    d["stat_t"]  = base + "/state";
+    d["val_tpl"] = String("{{ value_json.outputs[") + ch + String("] }}");
+    d["avty_t"]  = avty;
+    d["unit_of_measurement"] = "";
+    addDev(d);
+    pub("sensor", String("ch") + (ch + 1), d);
+    yield();
+  }
+}
+
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
+  String t(topic);
+  String msg;
+  msg.reserve(length);
+  for (unsigned int i = 0; i < length; ++i) msg += static_cast<char>(payload[i]);
+  const String base = "aqualed/" + mqttDeviceId();
+  if (t == base + "/master/set") {
+    masterEnabled = (msg == "ON");
+    Serial.printf("[MQTT] master→%s\n", masterEnabled ? "AAN" : "UIT");
+    mqttPublishState();
+  } else if (t == base + "/simulation/set") {
+    setSimulation(msg == "ON", simulationDaySeconds);
+    mqttPublishState();
+  } else if (t == base + "/preset/set") {
+    for (uint8_t i = 0; i < gData.presetCount; ++i) {
+      if (gData.presets[i].name == msg) {
+        gData.activePreset = i;
+        saveSchedulerData();
+        break;
+      }
+    }
+    mqttPublishState();
+  }
+}
+
+bool reconnectMqtt() {
+  const String id   = mqttDeviceId();
+  const String base = "aqualed/" + id;
+  const String avty = base + "/available";
+  bool ok;
+  if (gMqttConfig.username.isEmpty()) {
+    ok = mqttClient.connect(id.c_str(), avty.c_str(), 0, true, "offline");
+  } else {
+    ok = mqttClient.connect(id.c_str(),
+                            gMqttConfig.username.c_str(),
+                            gMqttConfig.password.c_str(),
+                            avty.c_str(), 0, true, "offline");
+  }
+  if (ok) {
+    mqttClient.publish(avty.c_str(), "online", true);
+    mqttClient.subscribe((base + "/master/set").c_str());
+    mqttClient.subscribe((base + "/simulation/set").c_str());
+    mqttClient.subscribe((base + "/preset/set").c_str());
+    mqttPublishDiscovery();
+    mqttPublishState();
+    Serial.println("[MQTT] Verbonden.");
+  } else {
+    Serial.printf("[MQTT] Verbinding mislukt, rc=%d\n", mqttClient.state());
+  }
+  return ok;
+}
+
+void mqttConnectIfNeeded() {
+  if (!gMqttConfig.enabled || gMqttConfig.broker.isEmpty()) return;
+  if (!wifiConnected() || mqttClient.connected()) return;
+  const unsigned long now = millis();
+  if (now - lastMqttReconnectMs < 15000) return;
+  lastMqttReconnectMs = now;
+  reconnectMqtt();
+}
+
+void setupMqtt() {
+  if (!gMqttConfig.enabled || gMqttConfig.broker.isEmpty()) return;
+  mqttClient.setBufferSize(1024);
+  mqttClient.setServer(gMqttConfig.broker.c_str(), gMqttConfig.port);
+  mqttClient.setCallback(mqttCallback);
+  lastMqttReconnectMs = 0;
+  Serial.printf("[MQTT] Ingesteld: %s:%u\n", gMqttConfig.broker.c_str(), gMqttConfig.port);
+}
+
 uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
   if (curve.pointCount == 0) return 0;
   if (curve.pointCount == 1) return curve.points[0].value;
@@ -605,7 +829,9 @@ void updateOutputs() {
   float minute = getMinuteOfDay();
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    float target = static_cast<float>(evaluateCurve(active.channels[ch], minute));
+    float target = masterEnabled
+        ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
+        : 0.0f;
     float diff = target - smoothOutputs[ch];
     if (fabsf(diff) <= MAX_STEP) {
       smoothOutputs[ch] = target;
@@ -648,7 +874,14 @@ String stateJson() {
   doc["simulationDaySeconds"] = simulationDaySeconds;
   doc["dateTime"] = currentDateTimeText();
   doc["otaPassword"] = gWifiConfig.otaPassword;
-  doc["timezone"] = gWifiConfig.timezone;
+  doc["timezone"]    = gWifiConfig.timezone;
+  doc["masterEnabled"]  = masterEnabled;
+  doc["mqttEnabled"]    = gMqttConfig.enabled;
+  doc["mqttConnected"]  = mqttClient.connected();
+  doc["mqttBroker"]     = gMqttConfig.broker;
+  doc["mqttPort"]       = gMqttConfig.port;
+  doc["mqttUsername"]   = gMqttConfig.username;
+  doc["mqttDeviceId"]   = mqttDeviceId();
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -924,6 +1157,46 @@ void handleSimulationSet() {
   sendJson(200, resp);
 }
 
+void handleMasterSet() {
+  DynamicJsonDocument body(256);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+  masterEnabled = body["enabled"] | masterEnabled;
+  Serial.printf("[MASTER] %s\n", masterEnabled ? "AAN" : "UIT");
+  mqttPublishState();
+  DynamicJsonDocument resp(256);
+  resp["ok"]            = true;
+  resp["masterEnabled"] = masterEnabled;
+  sendJson(200, resp);
+}
+
+void handleMqttSave() {
+  DynamicJsonDocument body(1024);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+  if (!body["enabled"].isNull())  gMqttConfig.enabled  = body["enabled"]  | false;
+  if (!body["broker"].isNull())   gMqttConfig.broker   = String((const char *)(body["broker"]   | ""));
+  if (!body["port"].isNull())     gMqttConfig.port     = body["port"]     | 1883;
+  if (!body["username"].isNull()) gMqttConfig.username = String((const char *)(body["username"] | ""));
+  if (!body["password"].isNull()) gMqttConfig.password = String((const char *)(body["password"] | ""));
+  gMqttConfig.broker.trim();
+  gMqttConfig.username.trim();
+  saveMqttConfig();
+  if (mqttClient.connected()) mqttClient.disconnect();
+  setupMqtt();
+  DynamicJsonDocument resp(256);
+  resp["ok"]           = true;
+  resp["mqttEnabled"]  = gMqttConfig.enabled;
+  resp["mqttConnected"] = false;
+  sendJson(200, resp);
+}
+
 void setupWebServer() {
   if (WiFi.getMode() == WIFI_MODE_NULL) {
     WiFi.mode(WIFI_STA);
@@ -938,7 +1211,9 @@ void setupWebServer() {
   server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
   server.on("/api/time/set", HTTP_POST, handleTimeSet);
   server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);
-  server.on("/api/colors/save", HTTP_POST, handleColorsSave);
+  server.on("/api/colors/save",    HTTP_POST, handleColorsSave);
+  server.on("/api/master/set",     HTTP_POST, handleMasterSet);
+  server.on("/api/mqtt/save",      HTTP_POST, handleMqttSave);
 
   server.onNotFound([]() {
     if (apModeActive) {
@@ -1101,6 +1376,7 @@ void setup() {
 
   Serial.println("[BOOT] loadWifiConfig");
   loadWifiConfig(gWifiConfig);
+  loadMqttConfig();
 
   WiFi.mode(WIFI_STA);
 
@@ -1130,6 +1406,19 @@ void loop() {
   server.handleClient();
 
   if (apModeActive) dnsServer.processNextRequest();
+
+  if (wifiConnected() && gMqttConfig.enabled) {
+    if (mqttClient.connected()) {
+      mqttClient.loop();
+      const unsigned long mqttNow = millis();
+      if (mqttNow - lastMqttPublishMs >= 30000) {
+        lastMqttPublishMs = mqttNow;
+        mqttPublishState();
+      }
+    } else {
+      mqttConnectIfNeeded();
+    }
+  }
 
   ensureWifiLink();
   handleSerialCli();
