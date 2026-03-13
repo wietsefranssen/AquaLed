@@ -32,7 +32,7 @@ constexpr byte DNS_PORT = 53;
 
 struct KeyPoint {
   uint16_t minute;
-  uint8_t value;
+  uint16_t value;
 };
 
 struct ChannelCurve {
@@ -92,7 +92,7 @@ uint16_t simulationStartMinute = 0;
 unsigned long simulationStartMs = 0;
 uint16_t simulationDaySeconds = 120;
 
-uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
+uint16_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 float smoothOutputs[LED_CHANNEL_COUNT] = {0};
 bool masterEnabled = true;
 MqttConfigData gMqttConfig{};
@@ -100,7 +100,7 @@ MqttConfigData gMqttConfig{};
 // Maanlicht simulatie
 bool moonlightEnabled = false;
 int8_t moonlightChannel = -1;   // -1 = uitgeschakeld
-uint8_t moonlightIntensity = 30; // 0-255
+uint16_t moonlightIntensity = 492; // 0-4095 (~12% standaard)
 bool moonlightCurrentlyActive = false;
 WiFiClient     mqttWifiClient;
 PubSubClient   mqttClient(mqttWifiClient);
@@ -123,10 +123,10 @@ uint16_t clampMinute(int minute) {
   return static_cast<uint16_t>(minute);
 }
 
-uint8_t clampValue(int value) {
+uint16_t clampValue(int value) {
   if (value < 0) return 0;
-  if (value > 255) return 255;
-  return static_cast<uint8_t>(value);
+  if (value > 4095) return 4095;
+  return static_cast<uint16_t>(value);
 }
 
 float smoothStep(float t) {
@@ -244,7 +244,7 @@ void fillDefaultPreset(Preset &preset, const String &name) {
   for (int ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     preset.channels[ch].pointCount = 4;
     for (int i = 0; i < 4; ++i) {
-      preset.channels[ch].points[i] = {times[i], dayShape[ch][i]};
+      preset.channels[ch].points[i] = {times[i], static_cast<uint16_t>(dayShape[ch][i] * 16)};
     }
     sortAndNormalizeCurve(preset.channels[ch]);
   }
@@ -266,6 +266,7 @@ bool saveSchedulerData() {
   if (!fsReady) return false;
 
   DynamicJsonDocument doc(28672);
+  doc["format"] = 2;  // 0-4095 schaal
   doc["activePreset"] = gData.activePreset;
   doc["simulationDaySeconds"] = simulationDaySeconds;
   doc["moonlightEnabled"]   = moonlightEnabled;
@@ -337,7 +338,12 @@ bool loadSchedulerData() {
   simulationDaySeconds = clampSimulationSeconds(doc["simulationDaySeconds"] | simulationDaySeconds);
   moonlightEnabled   = doc["moonlightEnabled"]   | false;
   moonlightChannel   = doc["moonlightChannel"]   | (int8_t)-1;
-  moonlightIntensity = clampValue(doc["moonlightIntensity"] | 30);
+  // Automatische migratie: waarden ≤255 zijn opgeslagen in oud 0-255 formaat
+  {
+    const bool oldFormat = !(doc["format"] | 0);
+    const int rawIntensity = doc["moonlightIntensity"] | 492;
+    moonlightIntensity = clampValue(oldFormat && rawIntensity <= 255 ? rawIntensity * 16 : rawIntensity);
+  }
 
   JsonArray jColors = doc["channelColors"].as<JsonArray>();
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
@@ -361,7 +367,10 @@ bool loadSchedulerData() {
         for (JsonObject point : points) {
           if (curve.pointCount >= MAX_POINTS) break;
           curve.points[curve.pointCount].minute = clampMinute(point["minute"] | 0);
-          curve.points[curve.pointCount].value = clampValue(point["value"] | 0);
+          // Automatische migratie: waarden ≤255 zijn opgeslagen in oud 0-255 formaat
+          const bool oldFormat = !(doc["format"] | 0);
+          const int rawVal = point["value"] | 0;
+          curve.points[curve.pointCount].value = clampValue(oldFormat && rawVal <= 255 ? rawVal * 16 : rawVal);
           curve.pointCount++;
         }
       }
@@ -812,7 +821,7 @@ void setupMqtt() {
   Serial.printf("[MQTT] Ingesteld: %s:%u\n", gMqttConfig.broker.c_str(), gMqttConfig.port);
 }
 
-uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
+uint16_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
   if (curve.pointCount == 0) return 0;
   if (curve.pointCount == 1) return curve.points[0].value;
 
@@ -850,24 +859,29 @@ uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
 }
 
 // Gamma 2.8 correctie: perceptueel lineair dimmen over volledig 12-bit bereik
+// Input: 0-4095 (perceptueel), output: 0-4095 (lineaire PWM duty)
 uint16_t gammaCorrectedDuty(float value) {
   if (value <= 0.0f) return 0;
-  if (value >= 255.0f) return PWM_MAX_DUTY;
-  float normalized = value / 255.0f;
+  if (value >= 4095.0f) return PWM_MAX_DUTY;
+  float normalized = value / 4095.0f;
   float corrected = powf(normalized, 2.8f);
   return static_cast<uint16_t>(roundf(corrected * PWM_MAX_DUTY));
 }
 
-void writePwm(uint8_t channel, uint8_t value) {
-  ledcWrite(channel, gammaCorrectedDuty(static_cast<float>(value)));
+// Schrijf een reeds berekende 12-bit PWM waarde (0-4095) direct naar het kanaal
+void writePwm(uint8_t channel, uint16_t value) {
+  ledcWrite(channel, value > PWM_MAX_DUTY ? PWM_MAX_DUTY : value);
 }
 
 void writePwmFloat(uint8_t channel, float value) {
-  ledcWrite(channel, gammaCorrectedDuty(value));
+  if (value <= 0.0f) { ledcWrite(channel, 0); return; }
+  if (value >= static_cast<float>(PWM_MAX_DUTY)) { ledcWrite(channel, PWM_MAX_DUTY); return; }
+  ledcWrite(channel, static_cast<uint16_t>(roundf(value)));
 }
 
 void updateOutputs() {
-  constexpr float MAX_STEP = 6.4f;  // ~2 sec fade (255 / (2000ms/50ms))
+  // ~2 sec fade: 4095 stappen over 2000ms bij 50ms interval = 4095/40 ≈ 102.4
+  constexpr float MAX_STEP = 102.4f;
 
   if (gData.presetCount == 0) return;
 
@@ -879,13 +893,14 @@ void updateOutputs() {
   moonlightCurrentlyActive = false;
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    // Gamma-correctie direct na curve-evaluatie: target in 0-4095 PWM-ruimte
     float target = masterEnabled
-        ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
+        ? static_cast<float>(gammaCorrectedDuty(evaluateCurve(active.channels[ch], minute)))
         : 0.0f;
-    // Maanlicht simulatie: maanwaarde is minimumhelderheid voor dit kanaal
+    // Maanlicht simulatie: maanwaarde is minimumhelderheid voor dit kanaal (ook in 0-4095)
     if (moonlightEnabled && moonlightChannel >= 0 && ch == static_cast<uint8_t>(moonlightChannel)) {
       if (masterEnabled) {
-        const float moonTarget = moonlightIntensity * calcMoonPhase();
+        const float moonTarget = static_cast<float>(gammaCorrectedDuty(moonlightIntensity * calcMoonPhase()));
         if (moonTarget > target) {
           target = moonTarget;
           moonlightCurrentlyActive = true;
@@ -902,9 +917,10 @@ void updateOutputs() {
         smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
       }
     }
-    // Altijd PWM schrijven met float voor vol 12-bit bereik + gamma
+    // smoothOutputs is in 0-4095 (lineaire PWM) ruimte. Inverse-gamma → 0-4095 perceptueel voor display.
     writePwmFloat(ch, smoothOutputs[ch]);
-    currentOutputs[ch] = static_cast<uint8_t>(roundf(smoothOutputs[ch]));
+    currentOutputs[ch] = smoothOutputs[ch] <= 0.0f ? 0
+        : static_cast<uint16_t>(roundf(powf(smoothOutputs[ch] / PWM_MAX_DUTY, 1.0f / 2.8f) * 4095.0f));
   }
 }
 
@@ -921,7 +937,7 @@ void printStatusToSerial() {
   }
   if (moonlightEnabled && moonlightChannel >= 0) {
     float phase = calcMoonPhase();
-    float brightness = moonlightIntensity * phase / 255.0f * 100.0f;
+    float brightness = moonlightIntensity * phase / 4095.0f * 100.0f;
     Serial.printf(" | Maan: ch%d brandt op %.1f%% (fase %.0f%%)",
                   moonlightChannel + 1, brightness, phase * 100.0f);
   }
@@ -1318,10 +1334,12 @@ void handlePreviewSet() {
     if (!directOutputs.isNull() && directOutputs.size() == LED_CHANNEL_COUNT) {
       previewDirect = true;
       for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-        uint8_t val = clampValue(directOutputs[ch] | 0);
-        smoothOutputs[ch] = static_cast<float>(val);
+        // Directe outputs van de JS zijn in 0-4095 perceptuele schaal
+        const uint16_t val = clampValue(directOutputs[ch] | 0);
+        const float duty = static_cast<float>(gammaCorrectedDuty(val));
+        smoothOutputs[ch] = duty;
         currentOutputs[ch] = val;
-        writePwmFloat(ch, smoothOutputs[ch]);
+        writePwmFloat(ch, duty);
       }
     } else {
       previewDirect = false;

@@ -117,7 +117,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     moonPhase: 0.5,
     moonlightEnabled: false,
     moonlightChannel: -1,
-    moonlightIntensity: 30,
+    moonlightIntensity: 492,
     moonlightActive: false,
     working: null,
     dragging: null,
@@ -149,11 +149,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const minuteToX = (m, w) => Math.max(0, Math.min(w, (m / DAY_MIN) * w));
-  const valueToY = (v, h) => Math.max(0, Math.min(h, h - (v / 255) * h));
+  const valueToY = (v, h) => Math.max(0, Math.min(h, h - (v / 4095) * h));
   const xToMinute = (x, w) => Math.round((Math.max(0, Math.min(w, x)) / w) * DAY_MIN);
-  const yToValue = (y, h) => Math.round(((h - Math.max(0, Math.min(h, y))) / h) * 255);
+  const yToValue = (y, h) => Math.round(((h - Math.max(0, Math.min(h, y))) / h) * 4095);
   const smoothStep = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
-  const toPct = (v) => Math.round(v / 255 * 100);
+  const toPct = (v) => Math.round(v / 4095 * 100);
   const fmtMin = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
 
   async function api(path, method = "GET", body = null) {
@@ -176,7 +176,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function sortAndClamp(points) {
     points.forEach(p => {
       p.minute = Math.max(0, Math.min(DAY_MIN, p.minute | 0));
-      p.value = Math.max(0, Math.min(255, p.value | 0));
+      p.value = Math.max(0, Math.min(4095, p.value | 0));
     });
     points.sort((a,b) => a.minute - b.minute);
     const out = [];
@@ -337,7 +337,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
               const p = Math.round(state.moonPhase * 100);
               const e = p >= 95 ? "🌕" : p >= 70 ? "🌔" : p >= 40 ? "🌓" : p >= 10 ? "🌒" : "🌑";
               const phaseName = p >= 95 ? "volle maan" : p >= 70 ? "bijna vol" : p >= 40 ? "halve maan" : p >= 10 ? "wassende maan" : "nieuwe maan";
-              const brightnessPct = Math.round(state.moonlightIntensity * state.moonPhase / 255 * 100);
+              const brightnessPct = Math.round(state.moonlightIntensity * state.moonPhase / 4095 * 100);
               const actief = state.moonlightActive;
               const toelichting = actief ? " <span style=\"opacity:.6;font-size:.85em\">(minimum actief)</span>" : "";
               return e + " " + phaseName + " (" + p + "% vol) — minimumhelderheid kanaal " + (state.moonlightChannel + 1) + ": <strong>" + brightnessPct + "%</strong>" + toelichting;
@@ -496,7 +496,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.moonPhase         = typeof s.moonPhase === "number" ? s.moonPhase : 0.5;
     state.moonlightEnabled  = !!s.moonlightEnabled;
     state.moonlightChannel  = typeof s.moonlightChannel === "number" ? s.moonlightChannel : -1;
-    state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : 30;
+    state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : 492;
     state.moonlightActive    = !!s.moonlightActive;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
   }

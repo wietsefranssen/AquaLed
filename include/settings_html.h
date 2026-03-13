@@ -223,8 +223,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
           </select>
         </div>
         <div>
-          <label for="moonlightIntensity">Intensiteit: <span id="moonlightIntensityVal">30</span>/255</label>
-          <input id="moonlightIntensity" type="range" min="0" max="255" value="30" style="width:100%;accent-color:var(--brand);">
+          <label for="moonlightIntensity">Intensiteit: <span id="moonlightIntensityVal">492</span>/4095</label>
+          <input id="moonlightIntensity" type="range" min="0" max="4095" value="492" style="width:100%;accent-color:var(--brand);">
         </div>
       </div>
       <div class="toolbar" style="margin-top:10px;">
@@ -365,10 +365,10 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       if (!s.moonlightEnabled || s.moonlightChannel < 0) return "maanlicht: uitgeschakeld";
       const ch = "kanaal " + (s.moonlightChannel + 1);
       const pct = Math.round((s.moonPhase || 0) * 100);
-      const out = Math.round((s.moonlightIntensity || 0) * (s.moonPhase || 0));
+      const out = Math.round((s.moonlightIntensity || 0) * (s.moonPhase || 0) / 4095 * 100);
       const e = pct>=95?"🌕":pct>=70?"🌔":pct>=40?"🌓":pct>=10?"🌒":"🌑";
-      return "maanlicht: AAN op " + ch + " — " + e + " " + pct + "% vol → vanavond " + out + "/255\n" +
-             "           (overdag volgt preset; 's nachts: max " + (s.moonlightIntensity||0) + " × maanfase)";
+      return "maanlicht: AAN op " + ch + " — " + e + " " + pct + "% vol → vanavond " + out + "%\n" +
+             "           (overdag volgt preset; 's nachts: max " + (s.moonlightIntensity||0) + "/4095 × maanfase)";
     })();
     el.live.textContent =
       "wifiConnected: " + (!!s.wifiConnected) + "\n" +
