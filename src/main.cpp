@@ -101,6 +101,7 @@ MqttConfigData gMqttConfig{};
 bool moonlightEnabled = false;
 int8_t moonlightChannel = -1;   // -1 = uitgeschakeld
 uint8_t moonlightIntensity = 30; // 0-255
+bool moonlightCurrentlyActive = false;
 WiFiClient     mqttWifiClient;
 PubSubClient   mqttClient(mqttWifiClient);
 unsigned long lastMqttPublishMs   = 0;
@@ -875,15 +876,20 @@ void updateOutputs() {
 
   const Preset &active = gData.presets[gData.activePreset];
   float minute = getMinuteOfDay();
+  moonlightCurrentlyActive = false;
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     float target = masterEnabled
         ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
         : 0.0f;
-    // Maanlicht simulatie: overdag volgt kanaal de preset; 's nachts (preset=0) maanfase-intensiteit
+    // Maanlicht simulatie: maanwaarde is minimumhelderheid voor dit kanaal
     if (moonlightEnabled && moonlightChannel >= 0 && ch == static_cast<uint8_t>(moonlightChannel)) {
-      if (masterEnabled && target <= 0.0f) {
-        target = moonlightIntensity * calcMoonPhase();
+      if (masterEnabled) {
+        const float moonTarget = moonlightIntensity * calcMoonPhase();
+        if (moonTarget > target) {
+          target = moonTarget;
+          moonlightCurrentlyActive = true;
+        }
       }
     }
     if (previewActive || simulationActive) {
@@ -948,10 +954,11 @@ String stateJson() {
   doc["mqttDeviceId"]   = mqttDeviceId();
   doc["version"]        = FIRMWARE_VERSION;
   doc["uptimeSec"]      = millis() / 1000UL;
-  doc["moonlightEnabled"]   = moonlightEnabled;
-  doc["moonlightChannel"]   = moonlightChannel;
-  doc["moonlightIntensity"] = moonlightIntensity;
-  doc["moonPhase"]          = calcMoonPhase();
+  doc["moonlightEnabled"]        = moonlightEnabled;
+  doc["moonlightChannel"]        = moonlightChannel;
+  doc["moonlightIntensity"]      = moonlightIntensity;
+  doc["moonPhase"]               = calcMoonPhase();
+  doc["moonlightActive"]         = moonlightCurrentlyActive;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)

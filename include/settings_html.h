@@ -205,7 +205,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
     <section class="card">
       <h2>Maanlicht simulatie</h2>
-      <div class="sub">Reserveer een kanaal voor een vaste maanlicht intensiteit (overrulet de preset-curve voor dat kanaal).</div>
+      <div class="sub">Reserveer een kanaal voor maanlicht: de maanfase-intensiteit wordt gebruikt als minimumhelderheid. Zit de preset-curve hoger, dan wint de preset.</div>
       <div class="row" style="margin-top:10px;">
         <div style="display:flex;align-items:center;gap:12px;">
           <label style="margin:0;width:auto">Maanlicht inschakelen</label>

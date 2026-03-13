@@ -118,6 +118,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     moonlightEnabled: false,
     moonlightChannel: -1,
     moonlightIntensity: 30,
+    moonlightActive: false,
     working: null,
     dragging: null,
     canvases: [],
@@ -337,7 +338,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
               const e = p >= 95 ? "🌕" : p >= 70 ? "🌔" : p >= 40 ? "🌓" : p >= 10 ? "🌒" : "🌑";
               const phaseName = p >= 95 ? "volle maan" : p >= 70 ? "bijna vol" : p >= 40 ? "halve maan" : p >= 10 ? "wassende maan" : "nieuwe maan";
               const brightnessPct = Math.round(state.moonlightIntensity * state.moonPhase / 255 * 100);
-              return e + " " + phaseName + " (" + p + "% vol) — kanaal " + (state.moonlightChannel + 1) + " brandt vanavond op <strong>" + brightnessPct + "%</strong> lichtsterkte";
+              const actief = state.moonlightActive;
+              const toelichting = actief ? " <span style=\"opacity:.6;font-size:.85em\">(minimum actief)</span>" : "";
+              return e + " " + phaseName + " (" + p + "% vol) — minimumhelderheid kanaal " + (state.moonlightChannel + 1) + ": <strong>" + brightnessPct + "%</strong>" + toelichting;
             })()
           + '</span></div>' : '')
       + '<hr class="live-divider">'
@@ -494,6 +497,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.moonlightEnabled  = !!s.moonlightEnabled;
     state.moonlightChannel  = typeof s.moonlightChannel === "number" ? s.moonlightChannel : -1;
     state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : 30;
+    state.moonlightActive    = !!s.moonlightActive;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
   }
 
