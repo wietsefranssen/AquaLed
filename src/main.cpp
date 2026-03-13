@@ -82,6 +82,7 @@ bool simulationActive = false;
 bool otaInProgress = false;
 bool debugWasEnabledBeforeOta = false;
 bool previewActive = false;
+bool previewDirect = false;
 uint16_t previewMinute = 0;
 
 uint16_t manualTimeBaseMinute = 0;
@@ -844,6 +845,9 @@ void updateOutputs() {
 
   if (gData.presetCount == 0) return;
 
+  // Bij directe preview-waarden: outputs vasthouden, niet opnieuw berekenen
+  if (previewActive && previewDirect) return;
+
   const Preset &active = gData.presets[gData.activePreset];
   float minute = getMinuteOfDay();
 
@@ -1242,7 +1246,7 @@ void handleSimulationSet() {
 }
 
 void handlePreviewSet() {
-  DynamicJsonDocument body(512);
+  DynamicJsonDocument body(1024);
   if (deserializeJson(body, server.arg("plain"))) {
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
@@ -1257,13 +1261,27 @@ void handlePreviewSet() {
     }
     previewMinute = clampMinute(body["minute"] | 0);
     previewActive = true;
-    Serial.printf("[PREVIEW] Aan: %u min\n", previewMinute);
+
+    // Als directe output-waarden meegegeven zijn, gebruik die i.p.v. evaluateCurve
+    JsonArray directOutputs = body["outputs"].as<JsonArray>();
+    if (!directOutputs.isNull() && directOutputs.size() == LED_CHANNEL_COUNT) {
+      previewDirect = true;
+      for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+        uint8_t val = clampValue(directOutputs[ch] | 0);
+        smoothOutputs[ch] = static_cast<float>(val);
+        currentOutputs[ch] = val;
+        writePwmFloat(ch, smoothOutputs[ch]);
+      }
+    } else {
+      previewDirect = false;
+      updateOutputs();
+    }
   } else {
     previewActive = false;
+    previewDirect = false;
     Serial.println("[PREVIEW] Uit");
+    updateOutputs();
   }
-
-  updateOutputs();
 
   DynamicJsonDocument resp(512);
   resp["ok"] = true;

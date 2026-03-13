@@ -359,11 +359,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   }
 
   let _previewDebounce = null;
-  function sendPreviewDebounced(minute) {
+  function sendPreviewDebounced(minute, outputs) {
     if (_previewDebounce) clearTimeout(_previewDebounce);
     _previewDebounce = setTimeout(async () => {
-      try { await api("/api/preview/set", "POST", { enabled: true, minute }); } catch(_){}
-    }, 80);
+      try {
+        const body = { enabled: true, minute };
+        if (outputs) body.outputs = outputs;
+        await api("/api/preview/set", "POST", body);
+      } catch(_){}
+    }, 60);
   }
 
   function activatePointPreview(minute) {
@@ -375,7 +379,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     el.previewSlider.value = minute;
     el.previewTime.textContent = fmtMin(minute);
     render();
-    sendPreviewDebounced(minute);
+    sendPreviewDebounced(minute, state.outputs);
   }
 
   function bindCanvas(c, idx) {
@@ -423,18 +427,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       const x = e.clientX - r.left;
       const y = e.clientY - r.top;
       const pts = state.working.channels[idx];
-      const p = pts[state.dragging.point];
-      if (!p) return;
-      p.minute = xToMinute(x, r.width);
-      p.value = yToValue(y, r.height);
+      const pi = state.dragging.point;
+      if (pi >= pts.length) return;
+      pts[pi].minute = xToMinute(x, r.width);
+      pts[pi].value = yToValue(y, r.height);
       state.working.channels[idx] = sortAndClamp(pts);
-      state.dragging.point = nearest(state.working.channels[idx], x, y, r.width, r.height);
-      activatePointPreview(p.minute);
+      const newIdx = nearest(state.working.channels[idx], x, y, r.width, r.height);
+      state.dragging.point = Math.max(0, newIdx);
+      const draggedPt = state.working.channels[idx][state.dragging.point];
+      activatePointPreview(draggedPt ? draggedPt.minute : xToMinute(x, r.width));
     });
 
     c.addEventListener("pointerup", async () => {
       if (state.dragging && state.previewMinute !== null) {
-        try { await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute }); } catch(_){}
+        try {
+          await api("/api/preview/set", "POST", {
+            enabled: true, minute: state.previewMinute, outputs: state.outputs
+          });
+        } catch(_){}
       }
       state.dragging = null;
     });
