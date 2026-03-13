@@ -326,7 +326,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       '<div class="live-row">' + badges + '</div>'
       + '<hr class="live-divider">'
       + '<div class="live-row"><span class="live-label">Preset</span><span class="live-value">' + (state.presets[state.activePreset]?.name || "-") + '</span></div>'
-      + '<div class="live-row"><span class="live-label">Tijd</span><span class="live-value">' + fmtMin(displayMin) + '</span></div>'
       + '<div class="live-row"><span class="live-label">Datum</span><span class="live-value">' + (state.dateTime || "-") + '</span></div>'
       + '<hr class="live-divider">'
       + '<div style="font-weight:600;font-size:.9rem;margin-bottom:2px;">Kanalen</div>'
