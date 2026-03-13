@@ -5,6 +5,7 @@
 #include <LittleFS.h>
 #include <WebServer.h>
 #include <PubSubClient.h>
+#include <Update.h>
 #include <WiFi.h>
 #include <time.h>
 
@@ -908,6 +909,7 @@ String stateJson() {
   doc["mqttPort"]       = gMqttConfig.port;
   doc["mqttUsername"]   = gMqttConfig.username;
   doc["mqttDeviceId"]   = mqttDeviceId();
+  doc["version"]        = FIRMWARE_VERSION;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -1427,6 +1429,38 @@ void setupWebServer() {
   server.on("/api/schedule/export",   HTTP_GET,  handleScheduleExport);
   server.on("/api/schedule/import",   HTTP_POST, handleScheduleImport);
 
+  server.on("/api/ota/upload", HTTP_POST, []() {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = !Update.hasError();
+    if (Update.hasError()) {
+      resp["error"] = "update failed";
+      sendJson(500, resp);
+    } else {
+      resp["message"] = "Update succesvol, herstart...";
+      sendJson(200, resp);
+      delay(500);
+      ESP.restart();
+    }
+  }, []() {
+    HTTPUpload &upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Serial.printf("[OTA-WEB] Start: %s\n", upload.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.printf("[OTA-WEB] Succes: %u bytes\n", upload.totalSize);
+      } else {
+        Update.printError(Serial);
+      }
+    }
+  });
+
   server.onNotFound([]() {
     if (apModeActive) {
       server.sendHeader("Location", "/settings", true);
@@ -1654,7 +1688,7 @@ void loop() {
     if (mqttClient.connected()) {
       mqttClient.loop();
       const unsigned long mqttNow = millis();
-      if (mqttNow - lastMqttPublishMs >= 30000) {
+      if (mqttNow - lastMqttPublishMs >= 600000) {
         lastMqttPublishMs = mqttNow;
         mqttPublishState();
       }

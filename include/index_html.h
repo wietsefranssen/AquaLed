@@ -41,6 +41,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
     .topbar h2 { margin: 0; flex: 1; font-size: 1.25rem; }
     .hint { font-size: .82rem; color: #7a8f82; margin-bottom: 6px; }
+    .version-tag { position: fixed; bottom: 6px; right: 10px; font-size: .72rem; color: #7a8f82; opacity: .5; pointer-events: none; z-index: 999; }
   </style>
 </head>
 <body>
@@ -95,6 +96,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     </div>
     <div class="card"><h3>Live info</h3><div id="live" class="live-grid">laden...</div></div>
   </div>
+  <div id="versionTag" class="version-tag"></div>
 
 <script>
 (() => {
@@ -476,6 +478,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     if (Array.isArray(s.channelColors) && s.channelColors.length === CHANNELS)
       state.colors = s.channelColors;
     state.masterEnabled = s.masterEnabled !== false;
+    if (s.version) document.getElementById("versionTag").textContent = s.version;
   }
 
   async function loadState() {

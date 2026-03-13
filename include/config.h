@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "dev"
+#endif
+
 // Vul deze waarden in voor je eigen netwerk.
 #ifndef WIFI_SSID
 #define WIFI_SSID "YOUR_WIFI_SSID"

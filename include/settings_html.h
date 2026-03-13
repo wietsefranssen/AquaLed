@@ -78,6 +78,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     .status.ok { color: var(--ok); }
     .status.err { color: var(--warn); }
     .mono { font-family: Menlo, Consolas, monospace; white-space: pre-wrap; }
+    .version-tag { position: fixed; bottom: 6px; right: 10px; font-size: .72rem; color: var(--muted); opacity: .5; pointer-events: none; z-index: 999; }
   </style>
 </head>
 <body>
@@ -201,7 +202,24 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       </div>
       <div id="colorStatus" class="status"></div>
     </section>
+
+    <section class="card">
+      <h2>Firmware update (OTA)</h2>
+      <div class="sub">Upload een nieuw firmware bestand (.bin) om de controller draadloos bij te werken.</div>
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label for="firmwareFile">Firmware bestand</label>
+          <input id="firmwareFile" type="file" accept=".bin">
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button id="btnOtaUpload" class="primary">Firmware uploaden</button>
+      </div>
+      <progress id="otaProgress" value="0" max="100" style="width:100%;display:none;margin-top:10px;height:22px;border-radius:8px;"></progress>
+      <div id="otaStatus" class="status"></div>
+    </section>
   </div>
+  <div id="versionTag" class="version-tag"></div>
 
 <script>
 (() => {
@@ -227,7 +245,11 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     mqttUser:    document.getElementById("mqttUser"),
     mqttPass:    document.getElementById("mqttPass"),
     btnMqttSave: document.getElementById("btnMqttSave"),
-    mqttStatus:  document.getElementById("mqttStatus")
+    mqttStatus:  document.getElementById("mqttStatus"),
+    firmwareFile: document.getElementById("firmwareFile"),
+    btnOtaUpload: document.getElementById("btnOtaUpload"),
+    otaProgress:  document.getElementById("otaProgress"),
+    otaStatus:    document.getElementById("otaStatus")
   };
 
   const Api = {
@@ -314,6 +336,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "ntpSynced: " + (!!s.ntpSynced) + "\n" +
       "manualTime: " + (!!s.manualTime) + "\n" +
       "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+    if (s.version) document.getElementById("versionTag").textContent = s.version;
   }
 
   async function refresh() {
@@ -389,6 +412,33 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     el.btnTimeSet.onclick  = setTime;
     el.btnColorSave.onclick = saveColors;
     el.btnMqttSave.onclick  = saveMqtt;
+    el.btnOtaUpload.onclick = () => {
+      const file = el.firmwareFile.files[0];
+      if (!file) { setStatus(el.otaStatus, "Kies eerst een bestand", "err"); return; }
+      el.otaProgress.style.display = "";
+      el.otaProgress.value = 0;
+      setStatus(el.otaStatus, "Uploaden...", "");
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/ota/upload");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) el.otaProgress.value = Math.round(e.loaded / e.total * 100);
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          setStatus(el.otaStatus, "Update succesvol! Herstart...", "ok");
+        } else {
+          el.otaProgress.style.display = "none";
+          setStatus(el.otaStatus, "Update mislukt", "err");
+        }
+      };
+      xhr.onerror = () => {
+        el.otaProgress.style.display = "none";
+        setStatus(el.otaStatus, "Upload fout", "err");
+      };
+      const formData = new FormData();
+      formData.append("firmware", file);
+      xhr.send(formData);
+    };
     el.timezone.onchange = async () => {
       try {
         await Api.saveWifi({
