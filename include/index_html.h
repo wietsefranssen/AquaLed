@@ -31,7 +31,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <button id="btnMasterToggle" class="primary" style="margin-left:auto;min-width:96px;">● AAN</button>
     </div>
     <h2>AquaLed Dagcurve Controller</h2>
-    <div>Curve is smooth. Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
+    <div>Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
   </div>
 
   <div class="card toolbar">
@@ -41,7 +41,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
     <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Export</button>
-    <label id="lblImport" title="Importeer presets uit JSON-bestand" style="cursor:pointer;border:1px solid #b7c9bc;border-radius:8px;padding:8px 10px;background:#fff;">
+    <label id="lblImport" title="Importeer presets uit JSON-bestand" style="cursor:pointer;border:1px solid #b7c9bc;border-radius:8px;padding:8px 10px;background:#fff;font-size:inherit;line-height:normal;box-sizing:border-box;display:inline-flex;align-items:center;">
       ⬆ Import
       <input id="fileImport" type="file" accept=".json" style="display:none">
     </label>
