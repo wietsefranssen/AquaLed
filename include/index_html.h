@@ -453,7 +453,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.presets.forEach((p,i) => {
       const o = document.createElement("option");
       o.value = String(i);
-      o.textContent = `${i} - ${p.name}`;
+      o.textContent = `${i+1} - ${p.name}`;
       if (i === state.activePreset) o.selected = true;
       el.presetSelect.appendChild(o);
     });

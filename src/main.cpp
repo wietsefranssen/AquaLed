@@ -236,7 +236,7 @@ constexpr const char *DEFAULT_COLORS[LED_CHANNEL_COUNT] = {
 void initDefaultData() {
   gData.presetCount = 1;
   gData.activePreset = 0;
-  fillDefaultPreset(gData.presets[0], "Default Reef Day");
+  fillDefaultPreset(gData.presets[0], "Default preset");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
     gData.channelColors[ch] = String(DEFAULT_COLORS[ch]);
 }
