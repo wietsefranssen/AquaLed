@@ -204,6 +204,36 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     </section>
 
     <section class="card">
+      <h2>Maanlicht simulatie</h2>
+      <div class="sub">Reserveer een kanaal voor een vaste maanlicht intensiteit (overrulet de preset-curve voor dat kanaal).</div>
+      <div class="row" style="margin-top:10px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <label style="margin:0;width:auto">Maanlicht inschakelen</label>
+          <input id="moonlightEnabled" type="checkbox" style="width:auto;accent-color:var(--brand);">
+        </div>
+        <div>
+          <label for="moonlightChannel">Kanaal</label>
+          <select id="moonlightChannel" style="width:100%;border-radius:10px;border:1px solid #c4d4ca;padding:10px;font-size:1rem;">
+            <option value="-1">-- geen --</option>
+            <option value="0">Kanaal 1</option>
+            <option value="1">Kanaal 2</option>
+            <option value="2">Kanaal 3</option>
+            <option value="3">Kanaal 4</option>
+            <option value="4">Kanaal 5</option>
+          </select>
+        </div>
+        <div>
+          <label for="moonlightIntensity">Intensiteit: <span id="moonlightIntensityVal">30</span>/255</label>
+          <input id="moonlightIntensity" type="range" min="0" max="255" value="30" style="width:100%;accent-color:var(--brand);">
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button id="btnMoonlightSave" class="primary">Opslaan</button>
+      </div>
+      <div id="moonlightStatus" class="status"></div>
+    </section>
+
+    <section class="card">
       <h2>Firmware update (OTA)</h2>
       <div class="sub">Upload een nieuw firmware bestand (.bin) om de controller draadloos bij te werken.</div>
       <div class="row" style="margin-top:10px;">
@@ -246,6 +276,12 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     mqttPass:    document.getElementById("mqttPass"),
     btnMqttSave: document.getElementById("btnMqttSave"),
     mqttStatus:  document.getElementById("mqttStatus"),
+    moonlightEnabled:    document.getElementById("moonlightEnabled"),
+    moonlightChannel:    document.getElementById("moonlightChannel"),
+    moonlightIntensity:  document.getElementById("moonlightIntensity"),
+    moonlightIntensityVal: document.getElementById("moonlightIntensityVal"),
+    btnMoonlightSave:    document.getElementById("btnMoonlightSave"),
+    moonlightStatus:     document.getElementById("moonlightStatus"),
     firmwareFile: document.getElementById("firmwareFile"),
     btnOtaUpload: document.getElementById("btnOtaUpload"),
     otaProgress:  document.getElementById("otaProgress"),
@@ -268,7 +304,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     saveWifi(payload) { return this.call("/api/wifi/save", "POST", payload); },
     setTime(payload) { return this.call("/api/time/set", "POST", payload); },
     saveColors(payload) { return this.call("/api/colors/save", "POST", payload); },
-    saveMqtt(payload)   { return this.call("/api/mqtt/save",   "POST", payload); }
+    saveMqtt(payload)   { return this.call("/api/mqtt/save",   "POST", payload); },
+    saveMoonlight(payload) { return this.call("/api/moonlight/save", "POST", payload); }
   };
 
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
@@ -324,6 +361,12 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     }
     const hh = Math.floor((s.nowMinute || 0) / 60);
     const mm = Math.floor((s.nowMinute || 0) % 60);
+    const moonLine = (() => {
+      if (!s.moonlightEnabled || s.moonlightChannel < 0) return "maanlicht: uitgeschakeld";
+      const ch = "kanaal " + (s.moonlightChannel + 1);
+      const pct = Math.round((s.moonlightIntensity || 0) / 255 * 100);
+      return "maanlicht: AAN op " + ch + " → vaste intensiteit " + (s.moonlightIntensity || 0) + "/255 (" + pct + "%) — preset-curve voor dit kanaal wordt genegeerd";
+    })();
     el.live.textContent =
       "wifiConnected: " + (!!s.wifiConnected) + "\n" +
       "ssid: " + (s.ssid || "-") + "\n" +
@@ -336,8 +379,16 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "ntpSynced: " + (!!s.ntpSynced) + "\n" +
       "manualTime: " + (!!s.manualTime) + "\n" +
       "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
-      "uptime: " + (()=>{ const u=s.uptimeSec||0; const uh=Math.floor(u/3600); const um=Math.floor((u%3600)/60); const us=u%60; return String(uh).padStart(2,"0")+":"+String(um).padStart(2,"0")+":"+String(us).padStart(2,"0"); })();
+      "uptime: " + (()=>{ const u=s.uptimeSec||0; const uh=Math.floor(u/3600); const um=Math.floor((u%3600)/60); const us=u%60; return String(uh).padStart(2,"0")+":"+String(um).padStart(2,"0")+":"+String(us).padStart(2,"0"); })() + "\n" +
+      moonLine;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
+    // Maanlicht
+    if (typeof s.moonlightEnabled === "boolean") el.moonlightEnabled.checked = s.moonlightEnabled;
+    if (typeof s.moonlightChannel === "number") el.moonlightChannel.value = String(s.moonlightChannel);
+    if (typeof s.moonlightIntensity === "number") {
+      el.moonlightIntensity.value = s.moonlightIntensity;
+      el.moonlightIntensityVal.textContent = s.moonlightIntensity;
+    }
   }
 
   async function refresh() {
@@ -350,6 +401,19 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       s.mqttConnected ? "Verbonden met " + (s.mqttBroker || "-") + " (id: " + (s.mqttDeviceId || "-") + ")" :
                         "MQTT ingeschakeld, niet verbonden",
       s.mqttEnabled && !s.mqttConnected ? "err" : (s.mqttConnected ? "ok" : ""));
+  }
+
+  async function saveMoonlight() {
+    try {
+      const out = await Api.saveMoonlight({
+        enabled:   el.moonlightEnabled.checked,
+        channel:   Number(el.moonlightChannel.value),
+        intensity: Number(el.moonlightIntensity.value)
+      });
+      setStatus(el.moonlightStatus, out.ok ? "Maanlicht opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
+    } catch (e) {
+      setStatus(el.moonlightStatus, "Opslaan mislukt: " + e.message, "err");
+    }
   }
 
   async function saveMqtt() {
@@ -413,6 +477,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     el.btnTimeSet.onclick  = setTime;
     el.btnColorSave.onclick = saveColors;
     el.btnMqttSave.onclick  = saveMqtt;
+    el.btnMoonlightSave.onclick = saveMoonlight;
+    el.moonlightIntensity.oninput = () => { el.moonlightIntensityVal.textContent = el.moonlightIntensity.value; };
     el.btnOtaUpload.onclick = () => {
       const file = el.firmwareFile.files[0];
       if (!file) { setStatus(el.otaStatus, "Kies eerst een bestand", "err"); return; }

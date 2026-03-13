@@ -96,6 +96,11 @@ uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 float smoothOutputs[LED_CHANNEL_COUNT] = {0};
 bool masterEnabled = true;
 MqttConfigData gMqttConfig{};
+
+// Maanlicht simulatie
+bool moonlightEnabled = false;
+int8_t moonlightChannel = -1;   // -1 = uitgeschakeld
+uint8_t moonlightIntensity = 30; // 0-255
 WiFiClient     mqttWifiClient;
 PubSubClient   mqttClient(mqttWifiClient);
 unsigned long lastMqttPublishMs   = 0;
@@ -249,6 +254,9 @@ bool saveSchedulerData() {
   DynamicJsonDocument doc(28672);
   doc["activePreset"] = gData.activePreset;
   doc["simulationDaySeconds"] = simulationDaySeconds;
+  doc["moonlightEnabled"]   = moonlightEnabled;
+  doc["moonlightChannel"]   = moonlightChannel;
+  doc["moonlightIntensity"] = moonlightIntensity;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -313,6 +321,9 @@ bool loadSchedulerData() {
   gData.presetCount = min<uint8_t>(presets.size(), MAX_PRESETS);
   gData.activePreset = min<uint8_t>(doc["activePreset"] | 0, gData.presetCount - 1);
   simulationDaySeconds = clampSimulationSeconds(doc["simulationDaySeconds"] | simulationDaySeconds);
+  moonlightEnabled   = doc["moonlightEnabled"]   | false;
+  moonlightChannel   = doc["moonlightChannel"]   | (int8_t)-1;
+  moonlightIntensity = clampValue(doc["moonlightIntensity"] | 30);
 
   JsonArray jColors = doc["channelColors"].as<JsonArray>();
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
@@ -856,6 +867,10 @@ void updateOutputs() {
     float target = masterEnabled
         ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
         : 0.0f;
+    // Maanlicht overschrijft preset-curve voor het gereserveerde kanaal
+    if (moonlightEnabled && moonlightChannel >= 0 && ch == static_cast<uint8_t>(moonlightChannel)) {
+      target = masterEnabled ? static_cast<float>(moonlightIntensity) : 0.0f;
+    }
     if (previewActive || simulationActive) {
       smoothOutputs[ch] = target;
     } else {
@@ -911,6 +926,9 @@ String stateJson() {
   doc["mqttDeviceId"]   = mqttDeviceId();
   doc["version"]        = FIRMWARE_VERSION;
   doc["uptimeSec"]      = millis() / 1000UL;
+  doc["moonlightEnabled"]   = moonlightEnabled;
+  doc["moonlightChannel"]   = moonlightChannel;
+  doc["moonlightIntensity"] = moonlightIntensity;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -1407,6 +1425,22 @@ void handleMqttSave() {
   sendJson(200, resp);
 }
 
+void handleMoonlightSave() {
+  DynamicJsonDocument body(256);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+  if (!body["enabled"].isNull())   moonlightEnabled   = body["enabled"]   | false;
+  if (!body["channel"].isNull())   moonlightChannel   = static_cast<int8_t>(body["channel"].as<int>());
+  if (!body["intensity"].isNull()) moonlightIntensity = clampValue(body["intensity"] | 30);
+  saveSchedulerData();
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  sendJson(200, resp);
+}
+
 void setupWebServer() {
   if (WiFi.getMode() == WIFI_MODE_NULL) {
     WiFi.mode(WIFI_STA);
@@ -1427,6 +1461,7 @@ void setupWebServer() {
   server.on("/api/colors/save",    HTTP_POST, handleColorsSave);
   server.on("/api/master/set",        HTTP_POST, handleMasterSet);
   server.on("/api/mqtt/save",         HTTP_POST, handleMqttSave);
+  server.on("/api/moonlight/save",    HTTP_POST, handleMoonlightSave);
   server.on("/api/schedule/export",   HTTP_GET,  handleScheduleExport);
   server.on("/api/schedule/import",   HTTP_POST, handleScheduleImport);
 
