@@ -910,6 +910,7 @@ String stateJson() {
   doc["mqttUsername"]   = gMqttConfig.username;
   doc["mqttDeviceId"]   = mqttDeviceId();
   doc["version"]        = FIRMWARE_VERSION;
+  doc["uptimeSec"]      = millis() / 1000UL;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)

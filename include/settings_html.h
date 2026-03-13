@@ -335,7 +335,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "mqttDeviceId: " + (s.mqttDeviceId || "-") + "\n" +
       "ntpSynced: " + (!!s.ntpSynced) + "\n" +
       "manualTime: " + (!!s.manualTime) + "\n" +
-      "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+      "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
+      "uptime: " + (()=>{ const u=s.uptimeSec||0; const uh=Math.floor(u/3600); const um=Math.floor((u%3600)/60); const us=u%60; return String(uh).padStart(2,"0")+":"+String(um).padStart(2,"0")+":"+String(us).padStart(2,"0"); })();
     if (s.version) document.getElementById("versionTag").textContent = s.version;
   }
 
