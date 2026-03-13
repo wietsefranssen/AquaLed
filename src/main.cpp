@@ -910,7 +910,14 @@ void printStatusToSerial() {
   Serial.printf("[STAT] %02d:%02d | Preset %u: %s | Out:", hh, mm, gData.activePreset,
                 gData.presets[gData.activePreset].name.c_str());
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    Serial.printf(" ch%u=%u", ch + 1, currentOutputs[ch]);
+    uint16_t duty = ledcRead(ch);
+    Serial.printf(" ch%u=%u(%u/4095)", ch + 1, currentOutputs[ch], duty);
+  }
+  if (moonlightEnabled && moonlightChannel >= 0) {
+    float phase = calcMoonPhase();
+    float brightness = moonlightIntensity * phase / 255.0f * 100.0f;
+    Serial.printf(" | Maan: ch%d brandt op %.1f%% (fase %.0f%%)",
+                  moonlightChannel + 1, brightness, phase * 100.0f);
   }
   Serial.println();
 }

@@ -332,7 +332,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       + '<div class="live-row"><span class="live-label">Preset</span><span class="live-value">' + (state.presets[state.activePreset]?.name || "-") + '</span></div>'
       + '<div class="live-row"><span class="live-label">Datum</span><span class="live-value">' + (state.dateTime || "-") + '</span></div>'
       + (state.moonlightEnabled && state.moonlightChannel >= 0 ? '<div class="live-row"><span class="live-label">Maanlicht</span><span class="live-value">'
-          + (()=>{ const p=Math.round(state.moonPhase*100); const e=p>=95?"🌕":p>=70?"🌔":p>=40?"🌓":p>=10?"🌒":"🌑"; const out=Math.round(state.moonlightIntensity*state.moonPhase); return e+" "+p+"% vol — kanaal "+(state.moonlightChannel+1)+" brandt vanavond op "+out+"/255"; })()
+          + (()=>{
+              const p = Math.round(state.moonPhase * 100);
+              const e = p >= 95 ? "🌕" : p >= 70 ? "🌔" : p >= 40 ? "🌓" : p >= 10 ? "🌒" : "🌑";
+              const phaseName = p >= 95 ? "volle maan" : p >= 70 ? "bijna vol" : p >= 40 ? "halve maan" : p >= 10 ? "wassende maan" : "nieuwe maan";
+              const brightnessPct = Math.round(state.moonlightIntensity * state.moonPhase / 255 * 100);
+              return e + " " + phaseName + " (" + p + "% vol) — kanaal " + (state.moonlightChannel + 1) + " brandt vanavond op <strong>" + brightnessPct + "%</strong> lichtsterkte";
+            })()
           + '</span></div>' : '')
       + '<hr class="live-divider">'
       + '<div style="font-weight:600;font-size:.9rem;margin-bottom:2px;">Kanalen</div>'
