@@ -38,16 +38,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .badge-off { background: #f8d7da; color: #922b21; }
     .badge-sim { background: #fff3cd; color: #856404; }
     .badge-preview { background: #d1ecf1; color: #0c5460; }
+    .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .topbar h2 { margin: 0; flex: 1; font-size: 1.25rem; }
+    .hint { font-size: .82rem; color: #7a8f82; margin-bottom: 6px; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="toolbar">
-      <a href="/settings">Naar instellingen</a>
-      <button id="btnMasterToggle" class="primary" style="margin-left:auto;min-width:96px;">● AAN</button>
-    </div>
-    <h2>AquaLed Dagcurve Controller</h2>
-    <div>Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
+  <div class="topbar">
+    <h2>AquaLed Dagcurve</h2>
+    <a href="/settings">⚙ Instellingen</a>
+    <button id="btnMasterToggle" class="primary" style="min-width:96px;">● AAN</button>
   </div>
 
   <div class="card toolbar">
@@ -88,7 +88,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="layout">
-    <div class="card"><div id="channels" class="channels"></div></div>
+    <div class="card">
+      <div class="hint">Klik op grafiek om punt te zetten. Sleep voor finetune, rechtsklik om te verwijderen.</div>
+      <div id="channels" class="channels"></div>
+    </div>
     <div class="card"><h3>Live info</h3><div id="live" class="live-grid">laden...</div></div>
   </div>
 
