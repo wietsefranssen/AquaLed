@@ -816,13 +816,25 @@ uint8_t evaluateCurve(const ChannelCurve &curve, float minuteOfDay) {
   return clampValue(static_cast<int>(roundf(value)));
 }
 
+// Gamma 2.8 correctie: perceptueel lineair dimmen over volledig 12-bit bereik
+uint16_t gammaCorrectedDuty(float value) {
+  if (value <= 0.0f) return 0;
+  if (value >= 255.0f) return PWM_MAX_DUTY;
+  float normalized = value / 255.0f;
+  float corrected = powf(normalized, 2.8f);
+  return static_cast<uint16_t>(roundf(corrected * PWM_MAX_DUTY));
+}
+
 void writePwm(uint8_t channel, uint8_t value) {
-  uint32_t duty = map(value, 0, 255, 0, PWM_MAX_DUTY);
-  ledcWrite(channel, duty);
+  ledcWrite(channel, gammaCorrectedDuty(static_cast<float>(value)));
+}
+
+void writePwmFloat(uint8_t channel, float value) {
+  ledcWrite(channel, gammaCorrectedDuty(value));
 }
 
 void updateOutputs() {
-  constexpr float MAX_STEP = 1.0f;
+  constexpr float MAX_STEP = 0.4f;
 
   if (gData.presetCount == 0) return;
 
@@ -843,11 +855,9 @@ void updateOutputs() {
         smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
       }
     }
-    uint8_t out = static_cast<uint8_t>(roundf(smoothOutputs[ch]));
-    if (out != currentOutputs[ch]) {
-      currentOutputs[ch] = out;
-      writePwm(ch, out);
-    }
+    // Altijd PWM schrijven met float voor vol 12-bit bereik + gamma
+    writePwmFloat(ch, smoothOutputs[ch]);
+    currentOutputs[ch] = static_cast<uint8_t>(roundf(smoothOutputs[ch]));
   }
 }
 
@@ -1229,7 +1239,7 @@ void handleMasterSet() {
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
       smoothOutputs[ch]  = 0.0f;
       currentOutputs[ch] = 0;
-      writePwm(ch, 0);
+      writePwmFloat(ch, 0.0f);
     }
   }
   mqttPublishState();
