@@ -479,9 +479,7 @@ bool connectWifiStation(uint16_t retryCycles = 80) {
 
 void setupTimeSync() {
   if (ntpConfigured) return;
-  setenv("TZ", gWifiConfig.timezone.c_str(), 1);
-  tzset();
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
+  configTzTime(gWifiConfig.timezone.c_str(), "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
   ntpConfigured = true;
   Serial.println("[NTP] Tijd sync gestart.");
 }
