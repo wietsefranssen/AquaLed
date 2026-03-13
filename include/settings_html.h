@@ -101,25 +101,15 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
           <label for="password">Wachtwoord</label>
           <input id="password" type="password" placeholder="Jouw wifi wachtwoord">
         </div>
+        <div>
+          <label for="otaPassword">OTA wachtwoord</label>
+          <input id="otaPassword" type="text" placeholder="OTA wachtwoord voor uploads">
+        </div>
       </div>
       <div class="toolbar" style="margin-top:10px;">
         <button id="btnWifiSave" class="primary">Opslaan en verbinden</button>
       </div>
       <div id="wifiStatus" class="status">Nog niet geladen</div>
-    </section>
-
-    <section class="card">
-      <h2>OTA wachtwoord</h2>
-      <div class="row">
-        <div>
-          <label for="otaPassword">Wachtwoord voor over-the-air updates</label>
-          <input id="otaPassword" type="text" placeholder="OTA wachtwoord">
-        </div>
-      </div>
-      <div class="toolbar" style="margin-top:10px;">
-        <button id="btnOtaSave" class="primary">OTA wachtwoord opslaan</button>
-      </div>
-      <div id="otaStatus" class="status"></div>
     </section>
 
     <section class="card">
@@ -199,9 +189,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     btnColorSave: document.getElementById("btnColorSave"),
     colorStatus: document.getElementById("colorStatus"),
     timezone: document.getElementById("timezone"),
-    tzStatus: document.getElementById("tzStatus"),
-    btnOtaSave: document.getElementById("btnOtaSave"),
-    otaStatus: document.getElementById("otaStatus")
+    tzStatus: document.getElementById("tzStatus")
   };
 
   const Api = {
@@ -218,7 +206,6 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     },
     state() { return this.call("/api/state"); },
     saveWifi(payload) { return this.call("/api/wifi/save", "POST", payload); },
-    saveOta(payload) { return this.call("/api/ota/save", "POST", payload); },
     setTime(payload) { return this.call("/api/time/set", "POST", payload); },
     saveColors(payload) { return this.call("/api/colors/save", "POST", payload); }
   };
@@ -295,21 +282,14 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     try {
       const out = await Api.saveWifi({
         ssid: el.ssid.value.trim(),
-        password: el.password.value
+        password: el.password.value,
+        otaPassword: el.otaPassword.value,
+        timezone: el.timezone.value
       });
       setStatus(el.wifiStatus, out.connected ? "Verbonden met wifi" : "Niet verbonden, AP mode actief", out.connected ? "ok" : "");
       await refresh();
     } catch (e) {
       setStatus(el.wifiStatus, "Opslaan mislukt: " + e.message, "err");
-    }
-  }
-
-  async function saveOta() {
-    try {
-      await Api.saveOta({ otaPassword: el.otaPassword.value.trim() });
-      setStatus(el.otaStatus, "OTA wachtwoord opgeslagen", "ok");
-    } catch (e) {
-      setStatus(el.otaStatus, "Opslaan mislukt: " + e.message, "err");
     }
   }
 
@@ -340,13 +320,14 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
   function bind() {
     el.btnWifiSave.onclick = saveWifi;
-    el.btnOtaSave.onclick = saveOta;
     el.btnTimeSet.onclick = setTime;
     el.btnColorSave.onclick = saveColors;
     el.timezone.onchange = async () => {
       try {
         await Api.saveWifi({
           ssid: el.ssid.value.trim(),
+          password: el.password.value,
+          otaPassword: el.otaPassword.value,
           timezone: el.timezone.value
         });
         setStatus(el.tzStatus, "Tijdzone opgeslagen", "ok");

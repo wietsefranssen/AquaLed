@@ -18,10 +18,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .status { font-size: .9rem; color: #5b6f64; }
     .channels { display: grid; gap: 10px; }
     .ch { border: 1px solid #d6e2d8; border-radius: 10px; padding: 8px; background: #fff; }
-    canvas { width: 100%; height: 160px; display: block; border: 1px solid #d4e0d8; border-radius: 8px; background: #f9fcfa; touch-action: none; cursor: crosshair; }
+    canvas { width: 100%; height: 160px; display: block; border: 1px solid #d4e0d8; border-radius: 8px; background: #f9fcfa; touch-action: none; }
     pre { white-space: pre-wrap; }
     .small { font-size: .85rem; color: #5b6f64; }
-    .tooltip { position: fixed; pointer-events: none; background: rgba(16,32,24,.88); color: #fff; padding: 4px 8px; border-radius: 6px; font: 12px/1.4 Menlo, monospace; z-index: 99; white-space: nowrap; }
     @media (min-width: 980px) { .layout { display: grid; grid-template-columns: 1.4fr .8fr; gap: 12px; } }
   </style>
 </head>
@@ -31,18 +30,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <a href="/settings">Naar instellingen</a>
     </div>
     <h2>AquaLed Dagcurve Controller</h2>
-    <div>Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
+    <div>Curve is smooth. Klik op grafiek om direct een punt op die waarde/tijd te zetten. Sleep voor finetune, rechtsklik om punt te verwijderen.</div>
   </div>
 
   <div class="card toolbar">
     <label for="presetSelect">Preset</label>
     <select id="presetSelect"></select>
-    <input id="presetName" placeholder="Naam preset">
+    <input id="presetName" placeholder="Naam nieuwe preset">
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
-    <button id="btnRename">Hernoem</button>
-    <button id="btnDelete" style="color:#a54733;">Verwijder</button>
-    <span id="status" class="status"></span>
+    <span id="status" class="status">Klaar</span>
   </div>
 
   <div class="card toolbar">
@@ -57,6 +54,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <option value="600">10 min</option>
     </select>
     <button id="btnSimStart" class="primary">Start simulatie</button>
+    <button id="btnSimStop">Stop simulatie</button>
     <span id="simState" class="small">Uit</span>
   </div>
 
@@ -64,7 +62,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <strong>Tijdlijn preview</strong>
     <input type="range" id="previewSlider" min="0" max="1439" value="0" style="flex:1;min-width:120px;">
     <span id="previewTime" class="small" style="min-width:44px;">--:--</span>
-    <button id="btnPreviewReset" style="display:none;">Continueer programma</button>
+    <button id="btnPreviewReset" style="display:none;">Reset naar huidige tijd</button>
   </div>
 
   <div class="layout">
@@ -102,9 +100,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     channels: document.getElementById("channels"),
     live: document.getElementById("live"),
     simSeconds: document.getElementById("simSeconds"),
-    btnRename: document.getElementById("btnRename"),
-    btnDelete: document.getElementById("btnDelete"),
     btnSimStart: document.getElementById("btnSimStart"),
+    btnSimStop: document.getElementById("btnSimStop"),
     simState: document.getElementById("simState"),
     previewSlider: document.getElementById("previewSlider"),
     previewTime: document.getElementById("previewTime"),
@@ -117,14 +114,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   const xToMinute = (x, w) => Math.round((Math.max(0, Math.min(w, x)) / w) * DAY_MIN);
   const yToValue = (y, h) => Math.round(((h - Math.max(0, Math.min(h, y))) / h) * 255);
   const smoothStep = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
-  const toPct = (v) => Math.round(v / 255 * 100);
-  const fmtMin = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
-
-  let statusTimer = null;
-  const tooltip = document.createElement("div");
-  tooltip.className = "tooltip";
-  tooltip.style.display = "none";
-  document.body.appendChild(tooltip);
 
   async function api(path, method = "GET", body = null) {
     const init = { method, headers: {} };
@@ -141,8 +130,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function setStatus(text, err = false) {
     el.status.textContent = text;
     el.status.style.color = err ? "#a54733" : "#2b6d3f";
-    clearTimeout(statusTimer);
-    if (text) statusTimer = setTimeout(() => { el.status.textContent = ""; }, 3000);
   }
 
   function sortAndClamp(points) {
@@ -225,13 +212,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       const tx = Math.max(2, Math.min(w - 36, x - 16));
       ctx.fillText(label, tx, h - 4);
     }
-
-    ctx.textAlign = "right";
-    for (let pct = 0; pct <= 100; pct += 25) {
-      const y = h - (pct / 100) * h;
-      if (y > 12 && y < h - 12) ctx.fillText(pct + "%", 30, y + 4);
-    }
-    ctx.textAlign = "left";
   }
 
   function draw(idx) {
@@ -285,26 +265,29 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function render() {
     for (let i = 0; i < CHANNELS; i++) draw(i);
     const displayMin = state.previewMinute !== null ? state.previewMinute : state.nowMinute;
+    const hh = Math.floor(displayMin / 60);
+    const mm = Math.floor(displayMin % 60);
     el.live.textContent =
       "Preset: " + (state.presets[state.activePreset]?.name || "-") + "\n" +
       "Datum/tijd: " + (state.dateTime || "-") + "\n" +
-      "Tijd (minuut): " + fmtMin(displayMin) + "\n" +
+      "Tijd (minuut): " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
       "Simulatie: " + (state.simulationActive ? ("aan (1 dag / " + state.simulationDaySeconds + "s)") : "uit") + "\n" +
-      "Outputs: " + state.outputs.map((v, i) => "ch" + (i+1) + "=" + toPct(v) + "%").join(", ") +
-      (state.previewMinute !== null ? "\nPreview: aan" : "");
+      "Outputs: " + state.outputs.join(", ");
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
-    el.btnSimStart.textContent = state.simulationActive ? "Stop simulatie" : "Start simulatie";
-    el.btnSimStart.className = state.simulationActive ? "" : "primary";
 
     if (state.previewMinute !== null) {
-      el.previewTime.textContent = fmtMin(state.previewMinute);
+      const ph = Math.floor(state.previewMinute / 60);
+      const pm = Math.floor(state.previewMinute % 60);
+      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
       el.previewSlider.value = state.previewMinute;
       el.btnPreviewReset.style.display = "";
     } else {
       el.previewSlider.value = Math.round(state.nowMinute);
-      el.previewTime.textContent = fmtMin(state.nowMinute);
+      const ph = Math.floor(state.nowMinute / 60);
+      const pm = Math.floor(state.nowMinute % 60);
+      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
       el.btnPreviewReset.style.display = "none";
     }
   }
@@ -369,30 +352,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       state.working.channels[idx] = sortAndClamp(pts);
       state.dragging.point = nearest(state.working.channels[idx], x, y, r.width, r.height);
       draw(idx);
-      const dp = pts[state.dragging.point];
-      if (dp) {
-        tooltip.textContent = fmtMin(dp.minute) + " \u2014 " + toPct(dp.value) + "%";
-        tooltip.style.display = "";
-        tooltip.style.left = (e.clientX + 12) + "px";
-        tooltip.style.top = (e.clientY - 28) + "px";
-      }
     });
 
     c.addEventListener("pointerup", () => { state.dragging = null; });
-    c.addEventListener("pointerleave", () => { state.dragging = null; tooltip.style.display = "none"; });
-
-    c.addEventListener("pointermove", (e) => {
-      if (state.dragging) return;
-      const r = c.getBoundingClientRect();
-      const x = e.clientX - r.left;
-      const y = e.clientY - r.top;
-      const minute = xToMinute(x, r.width);
-      const value = evaluateSmooth(state.working.channels[idx], minute);
-      tooltip.textContent = fmtMin(minute) + " — " + toPct(value) + "%";
-      tooltip.style.display = "";
-      tooltip.style.left = (e.clientX + 12) + "px";
-      tooltip.style.top = (e.clientY - 28) + "px";
-    });
+    c.addEventListener("pointerleave", () => { state.dragging = null; });
   }
 
   function buildChannels() {
@@ -417,8 +380,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.dateTime = s.dateTime || "-";
     state.simulationActive = !!s.simulationActive;
     state.simulationDaySeconds = Number(s.simulationDaySeconds || 120);
-    if (s.previewActive) state.previewMinute = s.nowMinute;
-    else state.previewMinute = null;
     if (Array.isArray(s.channelColors) && s.channelColors.length === CHANNELS)
       state.colors = s.channelColors;
   }
@@ -474,6 +435,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       try {
         await api("/api/preset/select", "POST", { index: idx });
         await loadState();
+        setStatus("Preset geladen", false);
       } catch (e) {
         setStatus("Laden mislukt: " + e.message, true);
       }
@@ -495,43 +457,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       }
     };
 
-    el.btnRename.onclick = async () => {
-      const idx = Number(el.presetSelect.value || 0);
-      const newName = el.presetName.value.trim();
-      if (!newName) return setStatus("Vul eerst een naam in", true);
-      try {
-        await api("/api/preset/rename", "POST", { index: idx, name: newName });
-        await loadState();
-        setStatus("Preset hernoemd", false);
-      } catch (e) {
-        setStatus("Hernoemen mislukt: " + e.message, true);
-      }
-    };
-
-    el.btnDelete.onclick = async () => {
-      const idx = Number(el.presetSelect.value || 0);
-      const name = state.presets[idx]?.name || "";
-      if (!confirm("Preset '" + name + "' verwijderen?")) return;
-      try {
-        await api("/api/preset/delete", "POST", { index: idx });
-        await loadState();
-        setStatus("Preset verwijderd", false);
-      } catch (e) {
-        setStatus("Verwijderen mislukt: " + e.message, true);
-      }
-    };
-
     el.btnSimStart.onclick = async () => {
       try {
-        const enable = !state.simulationActive;
-        if (enable) {
-          state.previewMinute = null;
-          stopSimLoop();
-        }
-        await setSimulation(enable);
-        setStatus(enable ? "Simulatie gestart" : "Simulatie gestopt", false);
+        await setSimulation(true);
+        setStatus("Simulatie gestart", false);
       } catch (e) {
-        setStatus("Simulatie mislukt: " + e.message, true);
+        setStatus("Simulatie starten mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnSimStop.onclick = async () => {
+      try {
+        await setSimulation(false);
+        setStatus("Simulatie gestopt", false);
+      } catch (e) {
+        setStatus("Simulatie stoppen mislukt: " + e.message, true);
       }
     };
 
@@ -546,95 +486,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     window.addEventListener("resize", render);
 
-    function localPreviewOutputs(minute) {
-      const preset = state.working || state.presets[state.activePreset];
-      if (!preset || !preset.channels) return;
-      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
-    }
-
     el.previewSlider.addEventListener("input", () => {
       state.previewMinute = Number(el.previewSlider.value);
-      if (state.simulationActive) {
-        state.simulationActive = false;
-        stopSimLoop();
-      }
-      localPreviewOutputs(state.previewMinute);
       render();
     });
 
-    el.previewSlider.addEventListener("change", async () => {
-      try {
-        const r = await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute });
-        if (r.outputs) { state.outputs = r.outputs; render(); }
-      } catch (_) {}
-    });
-
-    el.btnPreviewReset.onclick = async () => {
-      try {
-        const r = await api("/api/preview/set", "POST", { enabled: false });
-        state.previewMinute = null;
-        if (r.outputs) state.outputs = r.outputs;
-        render();
-        startPoll();
-      } catch (_) {}
+    el.btnPreviewReset.onclick = () => {
+      state.previewMinute = null;
+      render();
     };
 
-    let pollId = null;
-    let simAnchor = null;
-    let simRafId = null;
-
-    function localSimOutputs(minute) {
-      const preset = state.working || state.presets[state.activePreset];
-      if (!preset || !preset.channels) return;
-      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
-    }
-
-    function simFrame() {
-      if (!state.simulationActive || !simAnchor) { simRafId = null; return; }
-      const elapsed = (performance.now() - simAnchor.ts) / 1000;
-      const daySeconds = state.simulationDaySeconds || 120;
-      let m = simAnchor.minute + (elapsed / daySeconds) * 1440;
-      while (m >= 1440) m -= 1440;
-      state.nowMinute = m;
-      localSimOutputs(m);
-      render();
-      simRafId = requestAnimationFrame(simFrame);
-    }
-
-    function startSimLoop(anchorMinute) {
-      simAnchor = { minute: anchorMinute, ts: performance.now() };
-      if (!simRafId) simRafId = requestAnimationFrame(simFrame);
-    }
-
-    function stopSimLoop() {
-      if (simRafId) { cancelAnimationFrame(simRafId); simRafId = null; }
-      simAnchor = null;
-    }
-
-    function startPoll() {
-      if (pollId) return;
-      pollId = setInterval(async () => {
-        try {
-          if (state.previewMinute !== null) { stopPoll(); return; }
-          const s = await api("/api/state/light");
-          state.nowMinute = s.nowMinute || 0;
-          state.outputs = s.outputs || state.outputs;
-          state.dateTime = s.dateTime || state.dateTime;
-          state.simulationActive = !!s.simulationActive;
-          state.simulationDaySeconds = Number(s.simulationDaySeconds || state.simulationDaySeconds);
-          if (s.previewActive) state.previewMinute = s.nowMinute;
-          else state.previewMinute = null;
-          if (state.simulationActive) {
-            startSimLoop(s.nowMinute);
-          } else {
-            stopSimLoop();
-            render();
-          }
-        } catch (_) {}
-      }, 1000);
-    }
-    function stopPoll() { clearInterval(pollId); pollId = null; }
-    startPoll();
+    setInterval(async () => {
+      try {
+        const s = await api("/api/state");
+        mergeState(s);
+        render();
+      } catch (_) {
+      }
+    }, 1000);
   }
 
   boot().catch(err => setStatus("Initialisatie fout: " + err.message, true));

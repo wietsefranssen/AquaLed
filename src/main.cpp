@@ -69,7 +69,6 @@ bool ntpConfigured = false;
 bool otaConfigured = false;
 bool manualTimeActive = false;
 bool simulationActive = false;
-bool previewActive = false;
 bool otaInProgress = false;
 bool debugWasEnabledBeforeOta = false;
 
@@ -78,7 +77,6 @@ unsigned long manualTimeSetMs = 0;
 uint16_t simulationStartMinute = 0;
 unsigned long simulationStartMs = 0;
 uint16_t simulationDaySeconds = 120;
-uint16_t previewMinute = 0;
 
 uint8_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
 float smoothOutputs[LED_CHANNEL_COUNT] = {0};
@@ -417,8 +415,6 @@ bool connectWifiStation(uint16_t retryCycles = 80) {
     return true;
   }
 
-  WiFi.disconnect(true);
-  if (apModeActive) WiFi.mode(WIFI_AP);
   Serial.println("[WIFI] Verbinden mislukt.");
   return false;
 }
@@ -432,39 +428,26 @@ void setupTimeSync() {
   Serial.println("[NTP] Tijd sync gestart.");
 }
 
-const char *otaErrorString(ota_error_t err) {
-  switch (err) {
-    case OTA_AUTH_ERROR:    return "Auth fout (wachtwoord?)";
-    case OTA_BEGIN_ERROR:   return "Begin fout (geen ruimte?)";
-    case OTA_CONNECT_ERROR: return "Verbinding mislukt";
-    case OTA_RECEIVE_ERROR: return "Ontvangst fout";
-    case OTA_END_ERROR:     return "Einde fout";
-    default:                return "Onbekend";
-  }
-}
-
 void setupOta() {
-  ArduinoOTA.end();
+  if (otaConfigured) return;
 
   ArduinoOTA.setHostname(DEVICE_HOSTNAME);
   ArduinoOTA.setPassword(gWifiConfig.otaPassword.c_str());
-  ArduinoOTA.setTimeout(120000);
+  ArduinoOTA.setTimeout(30000);
   ArduinoOTA.setMdnsEnabled(true);
-  ArduinoOTA.setRebootOnSuccess(true);
   ArduinoOTA.onStart([]() {
     otaInProgress = true;
     debugWasEnabledBeforeOta = debugEnabled;
     debugEnabled = false;
     server.stop();
     if (apModeActive) dnsServer.stop();
-    WiFi.setSleep(false);
-    Serial.println("[OTA] Start upload...");
+    Serial.println("[OTA] Start");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     static unsigned int lastPercent = 999;
     if (progress == 0) lastPercent = 0;
     const unsigned int percent = total > 0 ? (progress * 100U) / total : 0U;
-    if (percent >= lastPercent + 5U || percent == 100U) {
+    if (percent >= lastPercent + 10U || percent == 100U) {
       lastPercent = percent;
       Serial.printf("[OTA] %u%%\n", percent);
     }
@@ -477,16 +460,14 @@ void setupOta() {
   });
   ArduinoOTA.onError([](ota_error_t err) {
     otaInProgress = false;
-    otaConfigured = false;
     debugEnabled = debugWasEnabledBeforeOta;
-    Serial.printf("[OTA] Fout %u: %s\n", err, otaErrorString(err));
-    delay(500);
+    Serial.printf("[OTA] Fout %u\n", err);
     server.begin();
     if (apModeActive) dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   });
   ArduinoOTA.begin();
   otaConfigured = true;
-  Serial.printf("[OTA] Actief. Host: %s, IP: %s\n", DEVICE_HOSTNAME, WiFi.localIP().toString().c_str());
+  Serial.println("[OTA] Actief.");
 }
 
 void activateNetworkServicesIfConnected() {
@@ -526,7 +507,6 @@ float getSimulatedMinuteOfDay() {
 }
 
 float getMinuteOfDay() {
-  if (previewActive) return static_cast<float>(previewMinute);
   return getSimulatedMinuteOfDay();
 }
 
@@ -626,15 +606,11 @@ void updateOutputs() {
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     float target = static_cast<float>(evaluateCurve(active.channels[ch], minute));
-    if (previewActive || simulationActive) {
+    float diff = target - smoothOutputs[ch];
+    if (fabsf(diff) <= MAX_STEP) {
       smoothOutputs[ch] = target;
     } else {
-      float diff = target - smoothOutputs[ch];
-      if (fabsf(diff) <= MAX_STEP) {
-        smoothOutputs[ch] = target;
-      } else {
-        smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
-      }
+      smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
     }
     uint8_t out = static_cast<uint8_t>(roundf(smoothOutputs[ch]));
     if (out != currentOutputs[ch]) {
@@ -649,11 +625,10 @@ void printStatusToSerial() {
   int hh = static_cast<int>(minute) / 60;
   int mm = static_cast<int>(minute) % 60;
 
-  Serial.printf("[STAT] %02d:%02d | Preset %u: %s%s | Out:", hh, mm, gData.activePreset,
-                gData.presets[gData.activePreset].name.c_str(),
-                previewActive ? " [PREVIEW]" : "");
+  Serial.printf("[STAT] %02d:%02d | Preset %u: %s | Out:", hh, mm, gData.activePreset,
+                gData.presets[gData.activePreset].name.c_str());
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    Serial.printf(" ch%u=%u%%", ch + 1, (currentOutputs[ch] * 100 + 127) / 255);
+    Serial.printf(" ch%u=%u", ch + 1, currentOutputs[ch]);
   }
   Serial.println();
 }
@@ -671,7 +646,6 @@ String stateJson() {
   doc["manualTime"] = manualTimeActive;
   doc["simulationActive"] = simulationActive;
   doc["simulationDaySeconds"] = simulationDaySeconds;
-  doc["previewActive"] = previewActive;
   doc["dateTime"] = currentDateTimeText();
   doc["otaPassword"] = gWifiConfig.otaPassword;
   doc["timezone"] = gWifiConfig.timezone;
@@ -713,18 +687,6 @@ void sendJson(int code, const JsonDocument &doc) {
 
 void handleGetState() {
   server.send(200, "application/json", stateJson());
-}
-
-void handleGetStateLight() {
-  DynamicJsonDocument doc(512);
-  doc["nowMinute"] = getMinuteOfDay();
-  doc["dateTime"] = currentDateTimeText();
-  doc["simulationActive"] = simulationActive;
-  doc["simulationDaySeconds"] = simulationDaySeconds;
-  doc["previewActive"] = previewActive;
-  JsonArray out = doc.createNestedArray("outputs");
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
-  sendJson(200, doc);
 }
 
 bool parsePresetFromJson(JsonVariantConst root, Preset &outPreset) {
@@ -829,81 +791,6 @@ void handlePresetSelect() {
   sendJson(200, resp);
 }
 
-void handlePresetRename() {
-  DynamicJsonDocument body(512);
-  if (deserializeJson(body, server.arg("plain"))) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "invalid json";
-    return sendJson(400, resp);
-  }
-
-  int index = body["index"] | -1;
-  if (index < 0 || index >= gData.presetCount) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "preset index out of range";
-    return sendJson(400, resp);
-  }
-
-  String name = String((const char *)(body["name"] | ""));
-  name.trim();
-  if (name.isEmpty()) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "name required";
-    return sendJson(400, resp);
-  }
-
-  gData.presets[index].name = name;
-  saveSchedulerData();
-
-  DynamicJsonDocument resp(256);
-  resp["ok"] = true;
-  sendJson(200, resp);
-}
-
-void handlePresetDelete() {
-  DynamicJsonDocument body(512);
-  if (deserializeJson(body, server.arg("plain"))) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "invalid json";
-    return sendJson(400, resp);
-  }
-
-  int index = body["index"] | -1;
-  if (index < 0 || index >= gData.presetCount) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "preset index out of range";
-    return sendJson(400, resp);
-  }
-
-  if (gData.presetCount <= 1) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "cannot delete last preset";
-    return sendJson(400, resp);
-  }
-
-  for (int i = index; i < gData.presetCount - 1; ++i)
-    gData.presets[i] = gData.presets[i + 1];
-  gData.presetCount--;
-
-  if (gData.activePreset >= gData.presetCount)
-    gData.activePreset = gData.presetCount - 1;
-  else if (gData.activePreset > index)
-    gData.activePreset--;
-
-  saveSchedulerData();
-
-  DynamicJsonDocument resp(256);
-  resp["ok"] = true;
-  resp["activePreset"] = gData.activePreset;
-  sendJson(200, resp);
-}
-
 void handleWifiSave() {
   DynamicJsonDocument body(1024);
   if (deserializeJson(body, server.arg("plain"))) {
@@ -914,17 +801,16 @@ void handleWifiSave() {
   }
 
   String ssid = String((const char *)(body["ssid"] | ""));
-  String password = body["password"].isNull()
-                        ? gWifiConfig.password
-                        : String((const char *)(body["password"] | ""));
+  String password = String((const char *)(body["password"] | ""));
+  String otaPassword = body["otaPassword"].isNull()
+                           ? gWifiConfig.otaPassword
+                           : String((const char *)(body["otaPassword"] | ""));
   String timezone = body["timezone"].isNull()
                         ? gWifiConfig.timezone
                         : String((const char *)(body["timezone"] | TZ_INFO));
   ssid.trim();
+  otaPassword.trim();
   timezone.trim();
-
-  String oldSsid = gWifiConfig.ssid;
-  String oldPassword = gWifiConfig.password;
 
   if (ssid.isEmpty()) {
     DynamicJsonDocument resp(256);
@@ -934,8 +820,9 @@ void handleWifiSave() {
   }
 
   gWifiConfig.ssid = ssid;
-  if (!password.isEmpty()) {
-    gWifiConfig.password = password;
+  gWifiConfig.password = password;
+  if (!otaPassword.isEmpty()) {
+    gWifiConfig.otaPassword = otaPassword;
   }
   if (!timezone.isEmpty()) {
     gWifiConfig.timezone = timezone;
@@ -944,17 +831,13 @@ void handleWifiSave() {
   }
   saveWifiConfig(gWifiConfig);
 
-  bool credentialsChanged = (ssid != oldSsid || password != oldPassword);
-  bool connected = wifiConnected();
-  if (credentialsChanged) {
-    connected = connectWifiStation(60);
-    if (connected) {
-      otaConfigured = false;
-      activateNetworkServicesIfConnected();
-      stopConfigAp();
-    } else {
-      startConfigAp();
-    }
+  bool connected = connectWifiStation(60);
+  if (connected) {
+    otaConfigured = false;
+    activateNetworkServicesIfConnected();
+    stopConfigAp();
+  } else {
+    startConfigAp();
   }
 
   DynamicJsonDocument resp(512);
@@ -1031,11 +914,6 @@ void handleSimulationSet() {
 
   bool enabled = body["enabled"] | false;
   int daySeconds = body["daySeconds"] | simulationDaySeconds;
-
-  if (enabled) {
-    previewActive = false;
-  }
-
   setSimulation(enabled, daySeconds);
 
   DynamicJsonDocument resp(256);
@@ -1043,70 +921,6 @@ void handleSimulationSet() {
   resp["simulationActive"] = simulationActive;
   resp["simulationDaySeconds"] = simulationDaySeconds;
   resp["nowMinute"] = getMinuteOfDay();
-  sendJson(200, resp);
-}
-
-void handlePreviewSet() {
-  DynamicJsonDocument body(512);
-  if (deserializeJson(body, server.arg("plain"))) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "invalid json";
-    return sendJson(400, resp);
-  }
-
-  bool enabled = body["enabled"] | false;
-  if (enabled) {
-    if (simulationActive) {
-      setSimulation(false, simulationDaySeconds);
-    }
-    int minute = body["minute"] | 0;
-    previewMinute = clampMinute(minute);
-    previewActive = true;
-    Serial.printf("[PREVIEW] Aan: %u min\n", previewMinute);
-  } else {
-    previewActive = false;
-    Serial.println("[PREVIEW] Uit");
-  }
-
-  updateOutputs();
-
-  DynamicJsonDocument resp(512);
-  resp["ok"] = true;
-  resp["previewActive"] = previewActive;
-  resp["nowMinute"] = getMinuteOfDay();
-  JsonArray out = resp.createNestedArray("outputs");
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
-  sendJson(200, resp);
-}
-
-void handleOtaSave() {
-  DynamicJsonDocument body(512);
-  if (deserializeJson(body, server.arg("plain"))) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "invalid json";
-    return sendJson(400, resp);
-  }
-
-  String otaPassword = String((const char *)(body["otaPassword"] | ""));
-  otaPassword.trim();
-
-  if (otaPassword.isEmpty()) {
-    DynamicJsonDocument resp(256);
-    resp["ok"] = false;
-    resp["error"] = "otaPassword required";
-    return sendJson(400, resp);
-  }
-
-  gWifiConfig.otaPassword = otaPassword;
-  saveWifiConfig(gWifiConfig);
-
-  otaConfigured = false;
-  if (wifiConnected()) setupOta();
-
-  DynamicJsonDocument resp(256);
-  resp["ok"] = true;
   sendJson(200, resp);
 }
 
@@ -1119,17 +933,12 @@ void setupWebServer() {
   server.on("/settings", HTTP_GET, []() { server.send_P(200, "text/html", SETTINGS_HTML); });
 
   server.on("/api/state", HTTP_GET, handleGetState);
-  server.on("/api/state/light", HTTP_GET, handleGetStateLight);
   server.on("/api/preset/upsert", HTTP_POST, handlePresetUpsert);
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
-  server.on("/api/preset/rename", HTTP_POST, handlePresetRename);
-  server.on("/api/preset/delete", HTTP_POST, handlePresetDelete);
   server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
   server.on("/api/time/set", HTTP_POST, handleTimeSet);
   server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);
-  server.on("/api/preview/set", HTTP_POST, handlePreviewSet);
   server.on("/api/colors/save", HTTP_POST, handleColorsSave);
-  server.on("/api/ota/save", HTTP_POST, handleOtaSave);
 
   server.onNotFound([]() {
     if (apModeActive) {
@@ -1158,11 +967,9 @@ void setupPwm() {
 }
 
 void ensureWifiLink() {
-  if (otaInProgress) return;
   const unsigned long now = millis();
   if (wifiConnected()) return;
-  const unsigned long retryInterval = apModeActive ? 60000 : WIFI_RETRY_MS;
-  if (now - lastWifiRetryMs < retryInterval) return;
+  if (now - lastWifiRetryMs < WIFI_RETRY_MS) return;
   lastWifiRetryMs = now;
 
   if (!hasWifiCredentials(gWifiConfig)) {
@@ -1171,7 +978,7 @@ void ensureWifiLink() {
   }
 
   Serial.println("[WIFI] Reconnect poging...");
-  bool connected = connectWifiStation(apModeActive ? 8 : 20);
+  bool connected = connectWifiStation(20);
   if (connected) {
     activateNetworkServicesIfConnected();
     stopConfigAp();
@@ -1191,9 +998,6 @@ void printCliHelp() {
   Serial.println("  debug on|off        - periodieke debug output aan/uit");
   Serial.println("  save                - forceer opslag van schedule");
   Serial.println("  wifi                - toon wifi status");
-  Serial.println("  preview HH:MM       - preview op tijdstip");
-  Serial.println("  preview off         - preview uitschakelen");
-  Serial.println("  preview             - toon preview status");
 }
 
 void handleCliCommand(String cmd) {
@@ -1247,44 +1051,6 @@ void handleCliCommand(String cmd) {
   } else if (cmd == "wifi") {
     Serial.printf("[CLI] WiFi status: %d, STA IP: %s, AP: %s\n", WiFi.status(),
                   WiFi.localIP().toString().c_str(), apModeActive ? WiFi.softAPIP().toString().c_str() : "off");
-  } else if (cmd == "preview") {
-    if (previewActive) {
-      int hh = previewMinute / 60;
-      int mm = previewMinute % 60;
-      Serial.printf("[CLI] Preview aan: %02d:%02d | Out:", hh, mm);
-      for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
-        Serial.printf(" ch%u=%u%%", ch + 1, (currentOutputs[ch] * 100 + 127) / 255);
-      Serial.println();
-    } else {
-      Serial.println("[CLI] Preview uit.");
-    }
-  } else if (cmd.startsWith("preview ")) {
-    String arg = cmd.substring(8);
-    arg.trim();
-    if (arg == "off") {
-      previewActive = false;
-      updateOutputs();
-      Serial.println("[CLI] Preview uit.");
-    } else {
-      int sep = arg.indexOf(':');
-      if (sep > 0) {
-        int hh = arg.substring(0, sep).toInt();
-        int mm = arg.substring(sep + 1).toInt();
-        if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-          previewMinute = hh * 60 + mm;
-          previewActive = true;
-          updateOutputs();
-          Serial.printf("[CLI] Preview aan: %02d:%02d | Out:", hh, mm);
-          for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
-            Serial.printf(" ch%u=%u%%", ch + 1, (currentOutputs[ch] * 100 + 127) / 255);
-          Serial.println();
-        } else {
-          Serial.println("[CLI] Ongeldige tijd, gebruik HH:MM.");
-        }
-      } else {
-        Serial.println("[CLI] Formaat: preview HH:MM | preview off");
-      }
-    }
   } else {
     Serial.println("[CLI] Onbekend commando, gebruik help.");
   }
@@ -1337,8 +1103,6 @@ void setup() {
   loadWifiConfig(gWifiConfig);
 
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   Serial.println("[BOOT] setupWebServer");
   setupWebServer();
@@ -1356,14 +1120,12 @@ void setup() {
 }
 
 void loop() {
-  if (otaConfigured) ArduinoOTA.handle();
+  if (wifiConnected() && otaConfigured) ArduinoOTA.handle();
 
   if (otaInProgress) {
-    delay(1);
+    yield();
     return;
   }
-
-  if (!otaConfigured && wifiConnected()) setupOta();
 
   server.handleClient();
 
