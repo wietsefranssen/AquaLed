@@ -103,6 +103,12 @@ unsigned long lastPwmUpdateMs = 0;
 unsigned long lastDebugMs = 0;
 unsigned long lastWifiRetryMs = 0;
 
+// Button state
+bool buttonPressed = false;
+unsigned long buttonPressedMs = 0;
+constexpr unsigned long BUTTON_DEBOUNCE_MS = 50;
+constexpr unsigned long BUTTON_LONG_PRESS_MS = 3000;
+
 uint16_t clampMinute(int minute) {
   if (minute < 0) return 0;
   if (minute > 1439) return 1439;
@@ -834,7 +840,7 @@ void writePwmFloat(uint8_t channel, float value) {
 }
 
 void updateOutputs() {
-  constexpr float MAX_STEP = 0.4f;
+  constexpr float MAX_STEP = 6.4f;  // ~2 sec fade (255 / (2000ms/50ms))
 
   if (gData.presetCount == 0) return;
 
@@ -1231,17 +1237,8 @@ void handleMasterSet() {
     resp["ok"] = false; resp["error"] = "invalid json";
     return sendJson(400, resp);
   }
-  const bool prev = masterEnabled;
   masterEnabled = body["enabled"] | masterEnabled;
   Serial.printf("[MASTER] %s\n", masterEnabled ? "AAN" : "UIT");
-  // Als master UIT gaat: direct alle kanalen naar 0, geen fade
-  if (prev && !masterEnabled) {
-    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-      smoothOutputs[ch]  = 0.0f;
-      currentOutputs[ch] = 0;
-      writePwmFloat(ch, 0.0f);
-    }
-  }
   mqttPublishState();
   DynamicJsonDocument resp(256);
   resp["ok"]            = true;
@@ -1498,6 +1495,34 @@ void handleSerialCli() {
   }
 }
 
+void handleButton() {
+  bool pressed = digitalRead(BUTTON_PIN) == LOW;
+  unsigned long now = millis();
+
+  if (pressed && !buttonPressed) {
+    buttonPressed = true;
+    buttonPressedMs = now;
+  } else if (!pressed && buttonPressed) {
+    buttonPressed = false;
+    unsigned long held = now - buttonPressedMs;
+    if (held >= BUTTON_DEBOUNCE_MS && held < BUTTON_LONG_PRESS_MS) {
+      // Kort indrukken: master aan/uit toggle
+      masterEnabled = !masterEnabled;
+      Serial.printf("[BTN] Master %s\n", masterEnabled ? "AAN" : "UIT");
+      mqttPublishState();
+    } else if (held >= BUTTON_LONG_PRESS_MS) {
+      // Lang indrukken: WiFi setup AP aan/uit toggle
+      if (apModeActive) {
+        stopConfigAp();
+        Serial.println("[BTN] Setup AP gestopt.");
+      } else {
+        startConfigAp();
+        Serial.println("[BTN] Setup AP gestart.");
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -1507,6 +1532,9 @@ void setup() {
 
   Serial.println("[BOOT] setupPwm");
   setupPwm();
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.println("[BOOT] Button op GPIO0 actief.");
 
   Serial.println("[BOOT] LittleFS.begin");
   fsReady = LittleFS.begin(false);
@@ -1574,6 +1602,7 @@ void loop() {
 
   ensureWifiLink();
   handleSerialCli();
+  handleButton();
 
   const unsigned long now = millis();
   if (now - lastPwmUpdateMs >= PWM_UPDATE_MS) {
