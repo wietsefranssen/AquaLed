@@ -22,6 +22,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     pre { white-space: pre-wrap; }
     .small { font-size: .85rem; color: #5b6f64; }
     @media (min-width: 980px) { .layout { display: grid; grid-template-columns: 1.4fr .8fr; gap: 12px; } }
+    .live-grid { display: flex; flex-direction: column; gap: 10px; }
+    .live-row { display: flex; align-items: center; gap: 8px; font-size: .92rem; }
+    .live-label { color: #5b6f64; min-width: 70px; }
+    .live-value { font-weight: 600; }
+    .live-divider { border: none; border-top: 1px solid #e4ebe6; margin: 2px 0; }
+    .ch-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .ch-swatch { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(0,0,0,.12); }
+    .ch-name { min-width: 28px; font-size: .85rem; color: #5b6f64; }
+    .ch-bar-track { flex: 1; height: 18px; background: #eef2ee; border-radius: 9px; overflow: hidden; position: relative; }
+    .ch-bar-fill { height: 100%; border-radius: 9px; transition: width .3s ease, background .3s ease; min-width: 0; }
+    .ch-bar-pct { min-width: 38px; text-align: right; font-size: .85rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .live-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: .8rem; font-weight: 600; }
+    .badge-on { background: #d4edda; color: #1d6a5c; }
+    .badge-off { background: #f8d7da; color: #922b21; }
+    .badge-sim { background: #fff3cd; color: #856404; }
+    .badge-preview { background: #d1ecf1; color: #0c5460; }
   </style>
 </head>
 <body>
@@ -73,7 +89,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
   <div class="layout">
     <div class="card"><div id="channels" class="channels"></div></div>
-    <div class="card"><h3>Live info</h3><pre id="live">laden...</pre></div>
+    <div class="card"><h3>Live info</h3><div id="live" class="live-grid">laden...</div></div>
   </div>
 
 <script>
@@ -278,14 +294,36 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function render() {
     for (let i = 0; i < CHANNELS; i++) draw(i);
     const displayMin = state.previewMinute !== null ? state.previewMinute : state.nowMinute;
-    el.live.textContent =
-      "Preset: " + (state.presets[state.activePreset]?.name || "-") + "\n" +
-      "Master: " + (state.masterEnabled ? "AAN" : "UIT") + "\n" +
-      "Datum/tijd: " + (state.dateTime || "-") + "\n" +
-      "Tijd (minuut): " + fmtMin(displayMin) + "\n" +
-      "Simulatie: " + (state.simulationActive ? ("aan (1 dag / " + state.simulationDaySeconds + "s)") : "uit") + "\n" +
-      "Outputs: " + state.outputs.map((v, i) => "ch" + (i+1) + "=" + toPct(v) + "%").join(", ") +
-      (state.previewMinute !== null ? "\nPreview: aan" : "");
+    const masterOn = state.masterEnabled;
+    const simOn = state.simulationActive;
+    const prevOn = state.previewMinute !== null;
+    let badges = '';
+    if (masterOn) badges += '<span class="live-badge badge-on">AAN</span> ';
+    else badges += '<span class="live-badge badge-off">UIT</span> ';
+    if (simOn) badges += '<span class="live-badge badge-sim">SIM ' + state.simulationDaySeconds + 's</span> ';
+    if (prevOn) badges += '<span class="live-badge badge-preview">PREVIEW</span> ';
+
+    let bars = '';
+    for (let i = 0; i < CHANNELS; i++) {
+      const pct = toPct(state.outputs[i]);
+      const col = state.colors[i % state.colors.length];
+      bars += '<div class="ch-bar-row">'
+        + '<span class="ch-swatch" style="background:' + col + '"></span>'
+        + '<span class="ch-name">' + (i + 1) + '</span>'
+        + '<div class="ch-bar-track"><div class="ch-bar-fill" style="width:' + pct + '%;background:' + col + ';"></div></div>'
+        + '<span class="ch-bar-pct">' + pct + '%</span>'
+        + '</div>';
+    }
+
+    el.live.innerHTML =
+      '<div class="live-row">' + badges + '</div>'
+      + '<hr class="live-divider">'
+      + '<div class="live-row"><span class="live-label">Preset</span><span class="live-value">' + (state.presets[state.activePreset]?.name || "-") + '</span></div>'
+      + '<div class="live-row"><span class="live-label">Tijd</span><span class="live-value">' + fmtMin(displayMin) + '</span></div>'
+      + '<div class="live-row"><span class="live-label">Datum</span><span class="live-value">' + (state.dateTime || "-") + '</span></div>'
+      + '<hr class="live-divider">'
+      + '<div style="font-weight:600;font-size:.9rem;margin-bottom:2px;">Kanalen</div>'
+      + bars;
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
