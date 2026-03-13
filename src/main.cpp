@@ -81,6 +81,8 @@ bool manualTimeActive = false;
 bool simulationActive = false;
 bool otaInProgress = false;
 bool debugWasEnabledBeforeOta = false;
+bool previewActive = false;
+uint16_t previewMinute = 0;
 
 uint16_t manualTimeBaseMinute = 0;
 unsigned long manualTimeSetMs = 0;
@@ -567,6 +569,7 @@ float getSimulatedMinuteOfDay() {
 }
 
 float getMinuteOfDay() {
+  if (previewActive) return static_cast<float>(previewMinute);
   return getSimulatedMinuteOfDay();
 }
 
@@ -832,11 +835,15 @@ void updateOutputs() {
     float target = masterEnabled
         ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
         : 0.0f;
-    float diff = target - smoothOutputs[ch];
-    if (fabsf(diff) <= MAX_STEP) {
+    if (previewActive || simulationActive) {
       smoothOutputs[ch] = target;
     } else {
-      smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
+      float diff = target - smoothOutputs[ch];
+      if (fabsf(diff) <= MAX_STEP) {
+        smoothOutputs[ch] = target;
+      } else {
+        smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
+      }
     }
     uint8_t out = static_cast<uint8_t>(roundf(smoothOutputs[ch]));
     if (out != currentOutputs[ch]) {
@@ -872,6 +879,7 @@ String stateJson() {
   doc["manualTime"] = manualTimeActive;
   doc["simulationActive"] = simulationActive;
   doc["simulationDaySeconds"] = simulationDaySeconds;
+  doc["previewActive"] = previewActive;
   doc["dateTime"] = currentDateTimeText();
   doc["otaPassword"] = gWifiConfig.otaPassword;
   doc["timezone"]    = gWifiConfig.timezone;
@@ -920,6 +928,19 @@ void sendJson(int code, const JsonDocument &doc) {
 
 void handleGetState() {
   server.send(200, "application/json", stateJson());
+}
+
+void handleGetStateLight() {
+  DynamicJsonDocument doc(512);
+  doc["nowMinute"] = getMinuteOfDay();
+  doc["dateTime"] = currentDateTimeText();
+  doc["simulationActive"] = simulationActive;
+  doc["simulationDaySeconds"] = simulationDaySeconds;
+  doc["previewActive"] = previewActive;
+  doc["masterEnabled"] = masterEnabled;
+  JsonArray out = doc.createNestedArray("outputs");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
+  sendJson(200, doc);
 }
 
 bool parsePresetFromJson(JsonVariantConst root, Preset &outPreset) {
@@ -1147,6 +1168,11 @@ void handleSimulationSet() {
 
   bool enabled = body["enabled"] | false;
   int daySeconds = body["daySeconds"] | simulationDaySeconds;
+
+  if (enabled) {
+    previewActive = false;
+  }
+
   setSimulation(enabled, daySeconds);
 
   DynamicJsonDocument resp(256);
@@ -1157,6 +1183,39 @@ void handleSimulationSet() {
   sendJson(200, resp);
 }
 
+void handlePreviewSet() {
+  DynamicJsonDocument body(512);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  bool enabled = body["enabled"] | false;
+  if (enabled) {
+    if (simulationActive) {
+      setSimulation(false, simulationDaySeconds);
+    }
+    previewMinute = clampMinute(body["minute"] | 0);
+    previewActive = true;
+    Serial.printf("[PREVIEW] Aan: %u min\n", previewMinute);
+  } else {
+    previewActive = false;
+    Serial.println("[PREVIEW] Uit");
+  }
+
+  updateOutputs();
+
+  DynamicJsonDocument resp(512);
+  resp["ok"] = true;
+  resp["previewActive"] = previewActive;
+  resp["nowMinute"] = getMinuteOfDay();
+  JsonArray out = resp.createNestedArray("outputs");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
+  sendJson(200, resp);
+}
+
 void handleMasterSet() {
   DynamicJsonDocument body(256);
   if (deserializeJson(body, server.arg("plain"))) {
@@ -1164,12 +1223,93 @@ void handleMasterSet() {
     resp["ok"] = false; resp["error"] = "invalid json";
     return sendJson(400, resp);
   }
+  const bool prev = masterEnabled;
   masterEnabled = body["enabled"] | masterEnabled;
   Serial.printf("[MASTER] %s\n", masterEnabled ? "AAN" : "UIT");
+  // Als master UIT gaat: direct alle kanalen naar 0, geen fade
+  if (prev && !masterEnabled) {
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      smoothOutputs[ch]  = 0.0f;
+      currentOutputs[ch] = 0;
+      writePwm(ch, 0);
+    }
+  }
   mqttPublishState();
   DynamicJsonDocument resp(256);
   resp["ok"]            = true;
   resp["masterEnabled"] = masterEnabled;
+  sendJson(200, resp);
+}
+
+void handleScheduleExport() {
+  DynamicJsonDocument doc(28672);
+  doc["activePreset"]         = gData.activePreset;
+  doc["simulationDaySeconds"] = simulationDaySeconds;
+  JsonArray jColors = doc.createNestedArray("channelColors");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
+    jColors.add(gData.channelColors[ch]);
+  JsonArray presets = doc.createNestedArray("presets");
+  for (uint8_t p = 0; p < gData.presetCount; ++p) {
+    JsonObject jp = presets.createNestedObject();
+    jp["name"] = gData.presets[p].name;
+    JsonArray channels = jp.createNestedArray("channels");
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      JsonArray points = channels.createNestedArray();
+      const ChannelCurve &curve = gData.presets[p].channels[ch];
+      for (uint8_t i = 0; i < curve.pointCount; ++i) {
+        JsonObject pt = points.createNestedObject();
+        pt["minute"] = curve.points[i].minute;
+        pt["value"]  = curve.points[i].value;
+      }
+    }
+  }
+  String payload;
+  serializeJsonPretty(doc, payload);
+  server.sendHeader("Content-Disposition", "attachment; filename=\"aqualed-presets.json\"");
+  server.send(200, "application/json", payload);
+}
+
+void handleScheduleImport() {
+  DynamicJsonDocument body(28672);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+  JsonArrayConst presets = body["presets"].as<JsonArrayConst>();
+  if (presets.isNull() || presets.size() == 0) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "geen presets gevonden";
+    return sendJson(400, resp);
+  }
+  const uint8_t count = min<uint8_t>(presets.size(), MAX_PRESETS);
+  SchedulerData newData{};
+  newData.presetCount  = count;
+  newData.activePreset = min<uint8_t>(body["activePreset"] | 0, count - 1);
+  // channel kleuren overnemen uit bestand of bestaande kleuren behouden
+  JsonArrayConst jColors = body["channelColors"].as<JsonArrayConst>();
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    if (!jColors.isNull() && ch < jColors.size())
+      newData.channelColors[ch] = String((const char *)(jColors[ch] | ""));
+    else
+      newData.channelColors[ch] = gData.channelColors[ch];
+  }
+  bool ok = true;
+  for (uint8_t p = 0; p < count; ++p) {
+    if (!parsePresetFromJson(presets[p], newData.presets[p])) { ok = false; break; }
+  }
+  if (!ok) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "ongeldig preset formaat in bestand";
+    return sendJson(400, resp);
+  }
+  gData = newData;
+  if (!body["simulationDaySeconds"].isNull())
+    simulationDaySeconds = clampSimulationSeconds(body["simulationDaySeconds"]);
+  saveSchedulerData();
+  DynamicJsonDocument resp(256);
+  resp["ok"]          = true;
+  resp["presetCount"] = gData.presetCount;
   sendJson(200, resp);
 }
 
@@ -1206,14 +1346,18 @@ void setupWebServer() {
   server.on("/settings", HTTP_GET, []() { server.send_P(200, "text/html", SETTINGS_HTML); });
 
   server.on("/api/state", HTTP_GET, handleGetState);
+  server.on("/api/state/light", HTTP_GET, handleGetStateLight);
+  server.on("/api/preview/set", HTTP_POST, handlePreviewSet);
   server.on("/api/preset/upsert", HTTP_POST, handlePresetUpsert);
   server.on("/api/preset/select", HTTP_POST, handlePresetSelect);
   server.on("/api/wifi/save", HTTP_POST, handleWifiSave);
   server.on("/api/time/set", HTTP_POST, handleTimeSet);
   server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);
   server.on("/api/colors/save",    HTTP_POST, handleColorsSave);
-  server.on("/api/master/set",     HTTP_POST, handleMasterSet);
-  server.on("/api/mqtt/save",      HTTP_POST, handleMqttSave);
+  server.on("/api/master/set",        HTTP_POST, handleMasterSet);
+  server.on("/api/mqtt/save",         HTTP_POST, handleMqttSave);
+  server.on("/api/schedule/export",   HTTP_GET,  handleScheduleExport);
+  server.on("/api/schedule/import",   HTTP_POST, handleScheduleImport);
 
   server.onNotFound([]() {
     if (apModeActive) {

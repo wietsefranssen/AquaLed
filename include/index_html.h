@@ -40,6 +40,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <input id="presetName" placeholder="Naam nieuwe preset">
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
+    <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Export</button>
+    <label id="lblImport" title="Importeer presets uit JSON-bestand" style="cursor:pointer;border:1px solid #b7c9bc;border-radius:8px;padding:8px 10px;background:#fff;">
+      ⬆ Import
+      <input id="fileImport" type="file" accept=".json" style="display:none">
+    </label>
     <span id="status" class="status">Klaar</span>
   </div>
 
@@ -55,7 +60,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <option value="600">10 min</option>
     </select>
     <button id="btnSimStart" class="primary">Start simulatie</button>
-    <button id="btnSimStop">Stop simulatie</button>
     <span id="simState" class="small">Uit</span>
   </div>
 
@@ -63,7 +67,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <strong>Tijdlijn preview</strong>
     <input type="range" id="previewSlider" min="0" max="1439" value="0" style="flex:1;min-width:120px;">
     <span id="previewTime" class="small" style="min-width:44px;">--:--</span>
-    <button id="btnPreviewReset" style="display:none;">Reset naar huidige tijd</button>
+  </div>
+
+  <div class="card toolbar" id="resumeBar" style="display:none;">
+    <button id="btnResume" class="primary" style="flex:1;">Hervat dagcurve</button>
   </div>
 
   <div class="layout">
@@ -103,12 +110,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     live: document.getElementById("live"),
     simSeconds: document.getElementById("simSeconds"),
     btnSimStart: document.getElementById("btnSimStart"),
-    btnSimStop: document.getElementById("btnSimStop"),
     simState: document.getElementById("simState"),
     previewSlider: document.getElementById("previewSlider"),
     previewTime: document.getElementById("previewTime"),
-    btnPreviewReset: document.getElementById("btnPreviewReset"),
-    btnMasterToggle: document.getElementById("btnMasterToggle")
+    btnPreviewReset: document.getElementById("btnResume"),
+    resumeBar: document.getElementById("resumeBar"),
+    btnMasterToggle: document.getElementById("btnMasterToggle"),
+    btnExport: document.getElementById("btnExport"),
+    fileImport: document.getElementById("fileImport")
   };
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -117,6 +126,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   const xToMinute = (x, w) => Math.round((Math.max(0, Math.min(w, x)) / w) * DAY_MIN);
   const yToValue = (y, h) => Math.round(((h - Math.max(0, Math.min(h, y))) / h) * 255);
   const smoothStep = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  const toPct = (v) => Math.round(v / 255 * 100);
+  const fmtMin = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
 
   async function api(path, method = "GET", body = null) {
     const init = { method, headers: {} };
@@ -268,15 +279,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function render() {
     for (let i = 0; i < CHANNELS; i++) draw(i);
     const displayMin = state.previewMinute !== null ? state.previewMinute : state.nowMinute;
-    const hh = Math.floor(displayMin / 60);
-    const mm = Math.floor(displayMin % 60);
     el.live.textContent =
       "Preset: " + (state.presets[state.activePreset]?.name || "-") + "\n" +
       "Master: " + (state.masterEnabled ? "AAN" : "UIT") + "\n" +
       "Datum/tijd: " + (state.dateTime || "-") + "\n" +
-      "Tijd (minuut): " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
+      "Tijd (minuut): " + fmtMin(displayMin) + "\n" +
       "Simulatie: " + (state.simulationActive ? ("aan (1 dag / " + state.simulationDaySeconds + "s)") : "uit") + "\n" +
-      "Outputs: " + state.outputs.join(", ");
+      "Outputs: " + state.outputs.map((v, i) => "ch" + (i+1) + "=" + toPct(v) + "%").join(", ") +
+      (state.previewMinute !== null ? "\nPreview: aan" : "");
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
@@ -285,18 +295,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     el.btnMasterToggle.style.background  = state.masterEnabled ? "" : "#c0392b";
     el.btnMasterToggle.style.borderColor = state.masterEnabled ? "" : "#922b21";
 
+    const showResume = state.simulationActive || state.previewMinute !== null;
+    el.resumeBar.style.display = showResume ? "" : "none";
+
     if (state.previewMinute !== null) {
-      const ph = Math.floor(state.previewMinute / 60);
-      const pm = Math.floor(state.previewMinute % 60);
-      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
+      el.previewTime.textContent = fmtMin(state.previewMinute);
       el.previewSlider.value = state.previewMinute;
-      el.btnPreviewReset.style.display = "";
     } else {
       el.previewSlider.value = Math.round(state.nowMinute);
-      const ph = Math.floor(state.nowMinute / 60);
-      const pm = Math.floor(state.nowMinute % 60);
-      el.previewTime.textContent = String(ph).padStart(2, "0") + ":" + String(pm).padStart(2, "0");
-      el.btnPreviewReset.style.display = "none";
+      el.previewTime.textContent = fmtMin(state.nowMinute);
     }
   }
 
@@ -468,19 +475,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     el.btnSimStart.onclick = async () => {
       try {
+        state.previewMinute = null;
+        stopSimLoop();
         await setSimulation(true);
         setStatus("Simulatie gestart", false);
       } catch (e) {
-        setStatus("Simulatie starten mislukt: " + e.message, true);
-      }
-    };
-
-    el.btnSimStop.onclick = async () => {
-      try {
-        await setSimulation(false);
-        setStatus("Simulatie gestopt", false);
-      } catch (e) {
-        setStatus("Simulatie stoppen mislukt: " + e.message, true);
+        setStatus("Simulatie mislukt: " + e.message, true);
       }
     };
 
@@ -508,24 +508,135 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     window.addEventListener("resize", render);
 
+    function localPreviewOutputs(minute) {
+      const preset = state.working || state.presets[state.activePreset];
+      if (!preset || !preset.channels) return;
+      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
+    }
+
     el.previewSlider.addEventListener("input", () => {
       state.previewMinute = Number(el.previewSlider.value);
+      if (state.simulationActive) {
+        state.simulationActive = false;
+        stopSimLoop();
+      }
+      localPreviewOutputs(state.previewMinute);
       render();
     });
 
-    el.btnPreviewReset.onclick = () => {
+    el.previewSlider.addEventListener("change", async () => {
+      try {
+        const r = await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute });
+        if (r.outputs) { state.outputs = r.outputs; render(); }
+      } catch (_) {}
+    });
+
+    el.btnPreviewReset.onclick = async () => {
+      try {
+        if (state.simulationActive) await setSimulation(false);
+        if (state.previewMinute !== null) await api("/api/preview/set", "POST", { enabled: false });
+      } catch (_) {}
       state.previewMinute = null;
+      state.simulationActive = false;
+      stopSimLoop();
       render();
+      startPoll();
+      setStatus("Dagcurve hervat", false);
     };
 
-    setInterval(async () => {
+    el.btnExport.onclick = async () => {
       try {
-        const s = await api("/api/state");
-        mergeState(s);
-        render();
-      } catch (_) {
+        setStatus("Exporteren...", false);
+        const res = await fetch("/api/schedule/export");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const text = await res.text();
+        const blob = new Blob([text], { type: "application/json" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url; a.download = "aqualed-presets.json";
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+        setStatus("Presets geëxporteerd", false);
+      } catch (e) {
+        setStatus("Export mislukt: " + e.message, true);
       }
-    }, 1000);
+    };
+
+    el.fileImport.onchange = async () => {
+      const file = el.fileImport.files[0];
+      if (!file) return;
+      try {
+        setStatus("Importeren...", false);
+        const text = await file.text();
+        let json;
+        try { json = JSON.parse(text); } catch (_) { throw new Error("geen geldig JSON-bestand"); }
+        const result = await api("/api/schedule/import", "POST", json);
+        if (!result.ok) throw new Error(result.error || "onbekende fout");
+        await loadState();
+        setStatus("Presets geïmporteerd (" + result.presetCount + " stuks)", false);
+      } catch (e) {
+        setStatus("Import mislukt: " + e.message, true);
+      }
+      el.fileImport.value = "";
+    };
+
+    let pollId = null;
+    let simAnchor = null;
+    let simRafId = null;
+
+    function localSimOutputs(minute) {
+      const preset = state.working || state.presets[state.activePreset];
+      if (!preset || !preset.channels) return;
+      state.outputs = preset.channels.map(pts => evaluateSmooth(pts, minute));
+    }
+
+    function simFrame() {
+      if (!state.simulationActive || !simAnchor) { simRafId = null; return; }
+      const elapsed = (performance.now() - simAnchor.ts) / 1000;
+      const daySeconds = state.simulationDaySeconds || 120;
+      let m = simAnchor.minute + (elapsed / daySeconds) * 1440;
+      while (m >= 1440) m -= 1440;
+      state.nowMinute = m;
+      localSimOutputs(m);
+      render();
+      simRafId = requestAnimationFrame(simFrame);
+    }
+
+    function startSimLoop(anchorMinute) {
+      simAnchor = { minute: anchorMinute, ts: performance.now() };
+      if (!simRafId) simRafId = requestAnimationFrame(simFrame);
+    }
+
+    function stopSimLoop() {
+      if (simRafId) { cancelAnimationFrame(simRafId); simRafId = null; }
+      simAnchor = null;
+    }
+
+    function startPoll() {
+      if (pollId) return;
+      pollId = setInterval(async () => {
+        try {
+          if (state.previewMinute !== null) { stopPoll(); return; }
+          const s = await api("/api/state/light");
+          state.nowMinute = s.nowMinute || 0;
+          state.outputs = s.outputs || state.outputs;
+          state.dateTime = s.dateTime || state.dateTime;
+          state.simulationActive = !!s.simulationActive;
+          state.simulationDaySeconds = Number(s.simulationDaySeconds || state.simulationDaySeconds);
+          state.masterEnabled = s.masterEnabled !== false;
+          if (s.previewActive) state.previewMinute = s.nowMinute;
+          else if (state.previewMinute === null) state.previewMinute = null;
+          if (state.simulationActive) {
+            startSimLoop(s.nowMinute);
+          } else {
+            stopSimLoop();
+            render();
+          }
+        } catch (_) {}
+      }, 1000);
+    }
+    function stopPoll() { clearInterval(pollId); pollId = null; }
+    startPoll();
   }
 
   boot().catch(err => setStatus("Initialisatie fout: " + err.message, true));
