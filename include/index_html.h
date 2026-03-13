@@ -114,6 +114,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     simulationDaySeconds: 120,
     masterEnabled: true,
     previewMinute: null,
+    moonPhase: 0.5,
+    moonlightEnabled: false,
+    moonlightChannel: -1,
+    moonlightIntensity: 30,
     working: null,
     dragging: null,
     canvases: [],
@@ -327,6 +331,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       + '<hr class="live-divider">'
       + '<div class="live-row"><span class="live-label">Preset</span><span class="live-value">' + (state.presets[state.activePreset]?.name || "-") + '</span></div>'
       + '<div class="live-row"><span class="live-label">Datum</span><span class="live-value">' + (state.dateTime || "-") + '</span></div>'
+      + (state.moonlightEnabled && state.moonlightChannel >= 0 ? '<div class="live-row"><span class="live-label">Maanlicht</span><span class="live-value">'
+          + (()=>{ const p=Math.round(state.moonPhase*100); const e=p>=95?"🌕":p>=70?"🌔":p>=40?"🌓":p>=10?"🌒":"🌑"; const out=Math.round(state.moonlightIntensity*state.moonPhase); return e+" "+p+"% vol — kanaal "+(state.moonlightChannel+1)+" brandt vanavond op "+out+"/255"; })()
+          + '</span></div>' : '')
       + '<hr class="live-divider">'
       + '<div style="font-weight:600;font-size:.9rem;margin-bottom:2px;">Kanalen</div>'
       + bars;
@@ -477,6 +484,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     if (Array.isArray(s.channelColors) && s.channelColors.length === CHANNELS)
       state.colors = s.channelColors;
     state.masterEnabled = s.masterEnabled !== false;
+    state.moonPhase         = typeof s.moonPhase === "number" ? s.moonPhase : 0.5;
+    state.moonlightEnabled  = !!s.moonlightEnabled;
+    state.moonlightChannel  = typeof s.moonlightChannel === "number" ? s.moonlightChannel : -1;
+    state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : 30;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
   }
 

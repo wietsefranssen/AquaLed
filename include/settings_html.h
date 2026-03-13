@@ -364,8 +364,11 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     const moonLine = (() => {
       if (!s.moonlightEnabled || s.moonlightChannel < 0) return "maanlicht: uitgeschakeld";
       const ch = "kanaal " + (s.moonlightChannel + 1);
-      const pct = Math.round((s.moonlightIntensity || 0) / 255 * 100);
-      return "maanlicht: AAN op " + ch + " → vaste intensiteit " + (s.moonlightIntensity || 0) + "/255 (" + pct + "%) — preset-curve voor dit kanaal wordt genegeerd";
+      const pct = Math.round((s.moonPhase || 0) * 100);
+      const out = Math.round((s.moonlightIntensity || 0) * (s.moonPhase || 0));
+      const e = pct>=95?"🌕":pct>=70?"🌔":pct>=40?"🌓":pct>=10?"🌒":"🌑";
+      return "maanlicht: AAN op " + ch + " — " + e + " " + pct + "% vol → vanavond " + out + "/255\n" +
+             "           (overdag volgt preset; 's nachts: max " + (s.moonlightIntensity||0) + " × maanfase)";
     })();
     el.live.textContent =
       "wifiConnected: " + (!!s.wifiConnected) + "\n" +

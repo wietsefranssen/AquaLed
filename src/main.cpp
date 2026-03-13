@@ -134,6 +134,19 @@ float smoothStep(float t) {
   return t * t * (3.0f - 2.0f * t);
 }
 
+// ─── Maanfase berekening ─────────────────────────────────────────────────────
+// Gebaseerd op Julian Day Number; referentie nieuwe maan: JD 2451550.1 (6 jan 2000)
+constexpr double MOON_CYCLE_DAYS = 29.53059;
+
+float calcMoonPhase() {
+  time_t now = time(nullptr);
+  if (now < 86400) return 0.5f;  // geen geldige tijd, geef halve maan terug
+  double jd  = now / 86400.0 + 2440587.5;
+  double age = fmod(jd - 2451550.1, MOON_CYCLE_DAYS);
+  if (age < 0.0) age += MOON_CYCLE_DAYS;
+  return static_cast<float>((1.0 - cos(2.0 * M_PI * age / MOON_CYCLE_DAYS)) / 2.0);
+}
+
 uint16_t clampSimulationSeconds(int seconds) {
   if (seconds < 5) return 5;
   if (seconds > 3600) return 3600;
@@ -867,9 +880,11 @@ void updateOutputs() {
     float target = masterEnabled
         ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
         : 0.0f;
-    // Maanlicht overschrijft preset-curve voor het gereserveerde kanaal
+    // Maanlicht simulatie: overdag volgt kanaal de preset; 's nachts (preset=0) maanfase-intensiteit
     if (moonlightEnabled && moonlightChannel >= 0 && ch == static_cast<uint8_t>(moonlightChannel)) {
-      target = masterEnabled ? static_cast<float>(moonlightIntensity) : 0.0f;
+      if (masterEnabled && target <= 0.0f) {
+        target = moonlightIntensity * calcMoonPhase();
+      }
     }
     if (previewActive || simulationActive) {
       smoothOutputs[ch] = target;
@@ -929,6 +944,7 @@ String stateJson() {
   doc["moonlightEnabled"]   = moonlightEnabled;
   doc["moonlightChannel"]   = moonlightChannel;
   doc["moonlightIntensity"] = moonlightIntensity;
+  doc["moonPhase"]          = calcMoonPhase();
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
