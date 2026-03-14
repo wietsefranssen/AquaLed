@@ -733,6 +733,21 @@ void mqttPublishDiscovery() {
     addDev(d);
     pub("switch", "master", d);
   }
+  { // Dimbare lamp (aan/uit + helderheid gecombineerd)
+    DynamicJsonDocument d(512);
+    d["name"]       = "AquaLed Lamp";
+    d["uniq_id"]    = id + "_lamp";
+    d["stat_t"]     = base + "/state";
+    d["val_tpl"]    = "{{ 'ON' if value_json.masterEnabled else 'OFF' }}";
+    d["cmd_t"]      = base + "/master/set";
+    d["bri_stat_t"] = base + "/state";
+    d["bri_val_tpl"]= "{{ (value_json.masterBrightness * 100) | round(0) | int }}";
+    d["bri_cmd_t"]  = base + "/brightness/set";
+    d["bri_scl"]    = 200;
+    d["avty_t"]     = avty;
+    addDev(d);
+    pub("light", "lamp", d);
+  }
   { // Simulatie schakelaar
     DynamicJsonDocument d(512);
     d["name"]    = "AquaLed Simulatie";
@@ -773,15 +788,14 @@ void mqttPublishDiscovery() {
     pub("number", "brightness", d);
   }
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) { // Kanaal sensoren
-    DynamicJsonDocument d(768);
+    DynamicJsonDocument d(512);
     d["name"]    = String("AquaLed Kanaal ") + (ch + 1);
     d["uniq_id"] = id + "_ch" + (ch + 1);
     d["stat_t"]  = base + "/state";
     d["val_tpl"] = String("{{ (value_json.outputs[") + ch + String("] / 4095 * 100) | round(0) | int }}");
     d["avty_t"]  = avty;
     d["unit_of_measurement"] = "%";
-    const String hexOnly = gData.channelColors[ch].length() > 1 ? gData.channelColors[ch].substring(1) : "888888";
-    d["entity_picture"] = String("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23") + hexOnly + String("'/%3E%3C/svg%3E");
+    d["icon"]    = "mdi:brightness-percent";
     addDev(d);
     pub("sensor", String("ch") + (ch + 1), d);
     yield();
