@@ -85,6 +85,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <span id="previewTime" class="small" style="min-width:44px;">--:--</span>
   </div>
 
+  <div class="card toolbar">
+    <strong>Helderheid</strong>
+    <input type="range" id="brightnessSlider" min="0" max="200" value="100" step="1" style="flex:1;min-width:120px;">
+    <span id="brightnessVal" class="small" style="min-width:44px;">100%</span>
+  </div>
+
   <div class="card toolbar" id="resumeBar" style="display:none;">
     <button id="btnResume" class="primary" style="flex:1;">Hervat dagcurve</button>
   </div>
@@ -92,6 +98,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <div class="layout">
     <div class="card">
       <div class="hint">Klik op grafiek om punt te zetten. Sleep voor finetune, rechtsklik om te verwijderen.</div>
+      <div style="font-weight:600;font-size:.85rem;margin-bottom:4px;color:#5b6f64;">Gecombineerd overzicht (na helderheidsscaling)</div>
+      <canvas id="canvasCombined" style="width:100%;height:110px;display:block;border:1px solid #d4e0d8;border-radius:8px;background:#f9fcfa;margin-bottom:10px;"></canvas>
       <div id="channels" class="channels"></div>
     </div>
     <div class="card"><h3>Live info</h3><div id="live" class="live-grid">laden...</div></div>
@@ -114,6 +122,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     simulationDaySeconds: 120,
     masterEnabled: true,
     previewMinute: null,
+    masterBrightness: 100,
     moonPhase: 0.5,
     moonlightEnabled: false,
     moonlightChannel: -1,
@@ -144,7 +153,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     btnMasterToggle: document.getElementById("btnMasterToggle"),
     btnExport: document.getElementById("btnExport"),
     btnImport: document.getElementById("btnImport"),
-    fileImport: document.getElementById("fileImport")
+    fileImport: document.getElementById("fileImport"),
+    brightnessSlider: document.getElementById("brightnessSlider"),
+    brightnessVal:    document.getElementById("brightnessVal"),
+    canvasCombined:   document.getElementById("canvasCombined")
   };
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -255,6 +267,51 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
   }
 
+  function drawCombined() {
+    const c = el.canvasCombined;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const r = c.getBoundingClientRect();
+    const w = Math.floor(r.width), h = Math.floor(r.height);
+    if (w === 0 || h === 0) return;
+    c.width = w * dpr; c.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    drawAxes(ctx, w, h);
+
+    const scale = state.masterBrightness / 100;
+    const moonTarget = state.moonlightEnabled && state.moonlightChannel >= 0
+      ? (state.moonlightIntensity || 0) * (state.moonPhase || 0)
+      : -1;
+    const preset = state.working || state.presets[state.activePreset];
+    if (preset && preset.channels) {
+      const samples = 240;
+      for (let i = 0; i < CHANNELS; i++) {
+        const points = preset.channels[i];
+        const col = state.colors[i % state.colors.length];
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let j = 0; j <= samples; j++) {
+          const minute = (j / samples) * DAY_MIN;
+          let val = evaluateSmooth(points, minute);
+          if (i === state.moonlightChannel && moonTarget >= 0) val = Math.max(val, moonTarget);
+          const scaled = Math.min(4095, val * scale);
+          const x = minuteToX(minute, w);
+          const y = valueToY(scaled, h);
+          if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+    // Verticale tijdlijn
+    const nowX = minuteToX(state.previewMinute !== null ? state.previewMinute : state.nowMinute, w);
+    ctx.strokeStyle = "#24362b";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(nowX, 0); ctx.lineTo(nowX, h); ctx.stroke();
+  }
+
   function draw(idx) {
     const c = state.canvases[idx];
     const ctx = c.getContext("2d");
@@ -305,6 +362,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
   function render() {
     for (let i = 0; i < CHANNELS; i++) draw(i);
+    drawCombined();
     const displayMin = state.previewMinute !== null ? state.previewMinute : state.nowMinute;
     const masterOn = state.masterEnabled;
     const simOn = state.simulationActive;
@@ -353,9 +411,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     el.btnMasterToggle.textContent = state.masterEnabled ? "● AAN" : "● UIT";
     el.btnMasterToggle.style.background  = state.masterEnabled ? "" : "#c0392b";
     el.btnMasterToggle.style.borderColor = state.masterEnabled ? "" : "#922b21";
-
-    const showResume = state.simulationActive || state.previewMinute !== null;
-    el.resumeBar.style.display = showResume ? "" : "none";
+    el.brightnessSlider.value = state.masterBrightness;
+    el.brightnessVal.textContent = state.masterBrightness + "%";
 
     if (state.previewMinute !== null) {
       el.previewTime.textContent = fmtMin(state.previewMinute);
@@ -493,6 +550,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     if (Array.isArray(s.channelColors) && s.channelColors.length === CHANNELS)
       state.colors = s.channelColors;
     state.masterEnabled = s.masterEnabled !== false;
+    state.masterBrightness = typeof s.masterBrightness === "number" ? Math.round(s.masterBrightness * 100) : state.masterBrightness;
     state.moonPhase         = typeof s.moonPhase === "number" ? s.moonPhase : 0.5;
     state.moonlightEnabled  = !!s.moonlightEnabled;
     state.moonlightChannel  = typeof s.moonlightChannel === "number" ? s.moonlightChannel : -1;
@@ -603,10 +661,27 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       try {
         const next = !state.masterEnabled;
         await api("/api/master/set", "POST", { enabled: next });
-        const s = await api("/api/state");
-        mergeState(s);
+        state.masterEnabled = next;
         render();
         setStatus("Master " + (next ? "ingeschakeld" : "uitgeschakeld"), false);
+
+        // Animeer de bars lokaal over 2 sec, synchroon met de firmware-fade
+        const from = state.outputs.slice();
+        const preset = state.presets[state.activePreset];
+        const to = next && preset
+          ? preset.channels.map(pts => evaluateSmooth(pts, state.nowMinute))
+          : state.outputs.map(() => 0);
+        const duration = 2000;
+        const start = performance.now();
+        const rafId = { id: null };
+        function animateMaster() {
+          const t = Math.min(1, (performance.now() - start) / duration);
+          const ease = t * t * (3 - 2 * t);
+          state.outputs = from.map((f, i) => Math.round(f + (to[i] - f) * ease));
+          render();
+          if (t < 1) rafId.id = requestAnimationFrame(animateMaster);
+        }
+        rafId.id = requestAnimationFrame(animateMaster);
       } catch (e) {
         setStatus("Master toggle mislukt: " + e.message, true);
       }
@@ -621,7 +696,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       }
     };
 
-    window.addEventListener("resize", render);
+    window.addEventListener("resize", () => { render(); });
+
+    let _brightDebounce = null;
+    el.brightnessSlider.addEventListener("input", () => {
+      state.masterBrightness = Number(el.brightnessSlider.value);
+      el.brightnessVal.textContent = state.masterBrightness + "%";
+      drawCombined();
+      if (_brightDebounce) clearTimeout(_brightDebounce);
+      _brightDebounce = setTimeout(async () => {
+        try { await api("/api/brightness/set", "POST", { brightness: state.masterBrightness / 100 }); }
+        catch(_) {}
+      }, 200);
+    });
 
     function localPreviewOutputs(minute) {
       const preset = state.working || state.presets[state.activePreset];
@@ -740,6 +827,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           state.simulationActive = !!s.simulationActive;
           state.simulationDaySeconds = Number(s.simulationDaySeconds || state.simulationDaySeconds);
           state.masterEnabled = s.masterEnabled !== false;
+          if (typeof s.masterBrightness === "number") {
+            state.masterBrightness = Math.round(s.masterBrightness * 100);
+            el.brightnessSlider.value = state.masterBrightness;
+            el.brightnessVal.textContent = state.masterBrightness + "%";
+          }
           if (s.previewActive) state.previewMinute = s.nowMinute;
           else if (state.previewMinute === null) state.previewMinute = null;
           if (state.simulationActive) {

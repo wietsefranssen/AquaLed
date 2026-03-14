@@ -102,6 +102,7 @@ bool moonlightEnabled = false;
 int8_t moonlightChannel = -1;   // -1 = uitgeschakeld
 uint16_t moonlightIntensity = 492; // 0-4095 (~12% standaard)
 bool moonlightCurrentlyActive = false;
+float masterBrightness = 1.0f;  // 0.0–2.0 (0–200%), schaalsfactor over alle kanalen
 WiFiClient     mqttWifiClient;
 PubSubClient   mqttClient(mqttWifiClient);
 unsigned long lastMqttPublishMs   = 0;
@@ -272,6 +273,7 @@ bool saveSchedulerData() {
   doc["moonlightEnabled"]   = moonlightEnabled;
   doc["moonlightChannel"]   = moonlightChannel;
   doc["moonlightIntensity"] = moonlightIntensity;
+  doc["masterBrightness"]   = masterBrightness;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -343,6 +345,10 @@ bool loadSchedulerData() {
     const bool oldFormat = !(doc["format"] | 0);
     const int rawIntensity = doc["moonlightIntensity"] | 492;
     moonlightIntensity = clampValue(oldFormat && rawIntensity <= 255 ? rawIntensity * 16 : rawIntensity);
+  }
+  {
+    float b = doc["masterBrightness"] | 1.0f;
+    masterBrightness = (b < 0.0f) ? 0.0f : (b > 2.0f) ? 2.0f : b;
   }
 
   JsonArray jColors = doc["channelColors"].as<JsonArray>();
@@ -671,6 +677,7 @@ void mqttPublishState() {
                                     ? gData.presets[gData.activePreset].name
                                     : String("");
   doc["nowMinute"]            = getMinuteOfDay();
+  doc["masterBrightness"]       = masterBrightness;
   JsonArray outs = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outs.add(currentOutputs[ch]);
   String payload;
@@ -737,6 +744,21 @@ void mqttPublishDiscovery() {
     addDev(d);
     pub("select", "preset", d);
   }
+  { // Helderheid (number)
+    DynamicJsonDocument d(512);
+    d["name"]    = "AquaLed Helderheid";
+    d["uniq_id"] = id + "_brightness";
+    d["stat_t"]  = base + "/state";
+    d["val_tpl"] = "{{ (value_json.masterBrightness * 100) | round(0) | int }}";
+    d["cmd_t"]   = base + "/brightness/set";
+    d["min"]     = 0;
+    d["max"]     = 200;
+    d["step"]    = 1;
+    d["unit_of_measurement"] = "%";
+    d["avty_t"]  = avty;
+    addDev(d);
+    pub("number", "brightness", d);
+  }
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) { // Kanaal sensoren
     DynamicJsonDocument d(512);
     d["name"]    = String("AquaLed Kanaal ") + (ch + 1);
@@ -773,6 +795,12 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
       }
     }
     mqttPublishState();
+  } else if (t == base + "/brightness/set") {
+    float pct = msg.toFloat();
+    masterBrightness = constrain(pct / 100.0f, 0.0f, 2.0f);
+    saveSchedulerData();
+    Serial.printf("[MQTT] helderheid→%.0f%%\n", pct);
+    mqttPublishState();
   }
 }
 
@@ -794,6 +822,7 @@ bool reconnectMqtt() {
     mqttClient.subscribe((base + "/master/set").c_str());
     mqttClient.subscribe((base + "/simulation/set").c_str());
     mqttClient.subscribe((base + "/preset/set").c_str());
+    mqttClient.subscribe((base + "/brightness/set").c_str());
     mqttPublishDiscovery();
     mqttPublishState();
     Serial.println("[MQTT] Verbonden.");
@@ -880,7 +909,8 @@ void writePwmFloat(uint8_t channel, float value) {
 }
 
 void updateOutputs() {
-  // ~2 sec fade: 4095 stappen over 2000ms bij 50ms interval = 4095/40 ≈ 102.4
+  // Fade in perceptuele ruimte (0-4095): 2 sec van max naar 0 = 4095/40 ticks ≈ 102.4 per tick
+  // Een waarde van bijv. 900/4095 fadet in 900/102.4 ≈ 9 ticks = 440ms — altijd zichtbaar vloeiend
   constexpr float MAX_STEP = 102.4f;
 
   if (gData.presetCount == 0) return;
@@ -893,21 +923,24 @@ void updateOutputs() {
   moonlightCurrentlyActive = false;
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    // Gamma-correctie direct na curve-evaluatie: target in 0-4095 PWM-ruimte
+    // Target in perceptuele 0-4095 ruimte (zelfde schaal als curve-punten)
     float target = masterEnabled
-        ? static_cast<float>(gammaCorrectedDuty(evaluateCurve(active.channels[ch], minute)))
+        ? static_cast<float>(evaluateCurve(active.channels[ch], minute))
         : 0.0f;
-    // Maanlicht simulatie: maanwaarde is minimumhelderheid voor dit kanaal (ook in 0-4095)
+    // Maanlicht: maanwaarde is minimumhelderheid in perceptuele ruimte
     if (moonlightEnabled && moonlightChannel >= 0 && ch == static_cast<uint8_t>(moonlightChannel)) {
       if (masterEnabled) {
-        const float moonTarget = static_cast<float>(gammaCorrectedDuty(moonlightIntensity * calcMoonPhase()));
+        const float moonTarget = moonlightIntensity * calcMoonPhase();
         if (moonTarget > target) {
           target = moonTarget;
           moonlightCurrentlyActive = true;
         }
       }
     }
-    if (previewActive || simulationActive) {
+    // Helderheidsscaling: schaal target met masterBrightness, limiteer op 4095
+    target = fminf(target * masterBrightness, 4095.0f);
+    // Altijd faden in perceptuele ruimte — behalve bij directe preview (slider slepen)
+    if (previewActive && previewDirect) {
       smoothOutputs[ch] = target;
     } else {
       float diff = target - smoothOutputs[ch];
@@ -917,10 +950,9 @@ void updateOutputs() {
         smoothOutputs[ch] += (diff > 0.0f ? MAX_STEP : -MAX_STEP);
       }
     }
-    // smoothOutputs is in 0-4095 (lineaire PWM) ruimte. Inverse-gamma → 0-4095 perceptueel voor display.
-    writePwmFloat(ch, smoothOutputs[ch]);
-    currentOutputs[ch] = smoothOutputs[ch] <= 0.0f ? 0
-        : static_cast<uint16_t>(roundf(powf(smoothOutputs[ch] / PWM_MAX_DUTY, 1.0f / 2.8f) * 4095.0f));
+    // Gamma-correctie alleen bij het schrijven naar PWM
+    writePwm(ch, gammaCorrectedDuty(smoothOutputs[ch]));
+    currentOutputs[ch] = static_cast<uint16_t>(roundf(smoothOutputs[ch]));
   }
 }
 
@@ -975,6 +1007,7 @@ String stateJson() {
   doc["moonlightIntensity"]      = moonlightIntensity;
   doc["moonPhase"]               = calcMoonPhase();
   doc["moonlightActive"]         = moonlightCurrentlyActive;
+  doc["masterBrightness"]        = masterBrightness;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -1023,6 +1056,7 @@ void handleGetStateLight() {
   doc["simulationDaySeconds"] = simulationDaySeconds;
   doc["previewActive"] = previewActive;
   doc["masterEnabled"] = masterEnabled;
+  doc["masterBrightness"] = masterBrightness;
   JsonArray out = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
   sendJson(200, doc);
@@ -1336,10 +1370,9 @@ void handlePreviewSet() {
       for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
         // Directe outputs van de JS zijn in 0-4095 perceptuele schaal
         const uint16_t val = clampValue(directOutputs[ch] | 0);
-        const float duty = static_cast<float>(gammaCorrectedDuty(val));
-        smoothOutputs[ch] = duty;
+        smoothOutputs[ch] = static_cast<float>(val);
         currentOutputs[ch] = val;
-        writePwmFloat(ch, duty);
+        writePwm(ch, gammaCorrectedDuty(smoothOutputs[ch]));
       }
     } else {
       previewDirect = false;
@@ -1489,6 +1522,23 @@ void handleMoonlightSave() {
   sendJson(200, resp);
 }
 
+void handleBrightnessSet() {
+  DynamicJsonDocument body(256);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false; resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+  float b = body["brightness"] | masterBrightness;
+  masterBrightness = (b < 0.0f) ? 0.0f : (b > 2.0f) ? 2.0f : b;
+  saveSchedulerData();
+  Serial.printf("[BRIGHTNESS] %.2f\n", masterBrightness);
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["masterBrightness"] = masterBrightness;
+  sendJson(200, resp);
+}
+
 void setupWebServer() {
   if (WiFi.getMode() == WIFI_MODE_NULL) {
     WiFi.mode(WIFI_STA);
@@ -1508,6 +1558,7 @@ void setupWebServer() {
   server.on("/api/simulation/set", HTTP_POST, handleSimulationSet);
   server.on("/api/colors/save",    HTTP_POST, handleColorsSave);
   server.on("/api/master/set",        HTTP_POST, handleMasterSet);
+  server.on("/api/brightness/set",    HTTP_POST, handleBrightnessSet);
   server.on("/api/mqtt/save",         HTTP_POST, handleMqttSave);
   server.on("/api/moonlight/save",    HTTP_POST, handleMoonlightSave);
   server.on("/api/schedule/export",   HTTP_GET,  handleScheduleExport);
