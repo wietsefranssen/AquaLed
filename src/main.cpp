@@ -696,6 +696,14 @@ void mqttPublishState() {
   String payload;
   serializeJson(doc, payload);
   mqttClient.publish(("aqualed/" + id + "/state").c_str(), payload.c_str(), true);
+
+  // Dedicated lamp state (JSON schema vereist puur JSON zonder templates)
+  DynamicJsonDocument lamp(128);
+  lamp["state"] = masterEnabled ? "ON" : "OFF";
+  lamp["brightness"] = (uint8_t)round(masterBrightness / 2.0f * 255.0f);
+  String lampPayload;
+  serializeJson(lamp, lampPayload);
+  mqttClient.publish(("aqualed/" + id + "/lamp").c_str(), lampPayload.c_str(), true);
 }
 
 void mqttPublishDiscovery() {
@@ -722,29 +730,20 @@ void mqttPublishDiscovery() {
     yield();
   };
 
-  { // Master schakelaar
+  // Verwijder eventueel overgebleven oude entiteiten
+  mqttClient.publish(("homeassistant/switch/" + id + "_master/config").c_str(), "", true);
+  mqttClient.publish(("homeassistant/number/" + id + "_brightness/config").c_str(), "", true);
+  yield();
+
+  { // Dimbare lamp (JSON schema)
     DynamicJsonDocument d(512);
-    d["name"]    = "AquaLed Master";
-    d["uniq_id"] = id + "_master";
-    d["stat_t"]  = base + "/state";
-    d["val_tpl"] = "{{ 'ON' if value_json.masterEnabled else 'OFF' }}";
-    d["cmd_t"]   = base + "/master/set";
-    d["avty_t"]  = avty;
-    addDev(d);
-    pub("switch", "master", d);
-  }
-  { // Dimbare lamp (aan/uit + helderheid gecombineerd)
-    DynamicJsonDocument d(512);
-    d["name"]       = "AquaLed Lamp";
-    d["uniq_id"]    = id + "_lamp";
-    d["stat_t"]     = base + "/state";
-    d["val_tpl"]    = "{{ 'ON' if value_json.masterEnabled else 'OFF' }}";
-    d["cmd_t"]      = base + "/master/set";
-    d["bri_stat_t"] = base + "/state";
-    d["bri_val_tpl"]= "{{ (value_json.masterBrightness * 100) | round(0) | int }}";
-    d["bri_cmd_t"]  = base + "/brightness/set";
-    d["bri_scl"]    = 200;
-    d["avty_t"]     = avty;
+    d["name"]    = "AquaLed";
+    d["uniq_id"] = id + "_lamp";
+    d["schema"]      = "json";
+    d["stat_t"]      = base + "/lamp";
+    d["cmd_t"]       = base + "/lamp/set";
+    d["brightness"]  = true;
+    d["avty_t"]      = avty;
     addDev(d);
     pub("light", "lamp", d);
   }
@@ -772,20 +771,8 @@ void mqttPublishDiscovery() {
     addDev(d);
     pub("select", "preset", d);
   }
-  { // Helderheid (number)
-    DynamicJsonDocument d(512);
-    d["name"]    = "AquaLed Helderheid";
-    d["uniq_id"] = id + "_brightness";
-    d["stat_t"]  = base + "/state";
-    d["val_tpl"] = "{{ (value_json.masterBrightness * 100) | round(0) | int }}";
-    d["cmd_t"]   = base + "/brightness/set";
-    d["min"]     = 0;
-    d["max"]     = 200;
-    d["step"]    = 1;
-    d["unit_of_measurement"] = "%";
-    d["avty_t"]  = avty;
-    addDev(d);
-    pub("number", "brightness", d);
+  { // Helderheid — verborgen, aangestuurd via lamp
+    // (enkel bewaard voor automaties die /brightness/set gebruiken)
   }
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) { // Kanaal sensoren
     DynamicJsonDocument d(512);
@@ -830,6 +817,21 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     saveSchedulerData();
     Serial.printf("[MQTT] helderheid→%.0f%%\n", pct);
     mqttPublishState();
+  } else if (t == base + "/lamp/set") {
+    DynamicJsonDocument cmd(256);
+    if (!deserializeJson(cmd, msg)) {
+      if (cmd.containsKey("state")) {
+        masterEnabled = (String((const char *)cmd["state"]) == "ON");
+      }
+      if (cmd.containsKey("brightness")) {
+        float bri = cmd["brightness"].as<float>();
+        // HA stuurt 0-255; 255 = 200% (max)
+        masterBrightness = constrain(bri / 255.0f * 2.0f, 0.0f, 2.0f);
+        saveSchedulerData();
+      }
+      Serial.printf("[MQTT] lamp→%s %.0f%%\n", masterEnabled ? "AAN" : "UIT", masterBrightness * 100);
+      mqttPublishState();
+    }
   }
 }
 
@@ -852,6 +854,7 @@ bool reconnectMqtt() {
     mqttClient.subscribe((base + "/simulation/set").c_str());
     mqttClient.subscribe((base + "/preset/set").c_str());
     mqttClient.subscribe((base + "/brightness/set").c_str());
+    mqttClient.subscribe((base + "/lamp/set").c_str());
     mqttPublishDiscovery();
     mqttPublishState();
     Serial.println("[MQTT] Verbonden.");
