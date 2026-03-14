@@ -447,6 +447,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     el.brightnessSlider.value = state.masterBrightness;
     el.brightnessVal.textContent = state.masterBrightness + "%";
 
+    const showResume = state.simulationActive || state.previewMinute !== null;
+    el.resumeBar.style.display = showResume ? "" : "none";
+
     if (state.previewMinute !== null) {
       el.previewTime.textContent = fmtMin(state.previewMinute);
       el.previewSlider.value = state.previewMinute;
