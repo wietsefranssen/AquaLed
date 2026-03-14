@@ -131,7 +131,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     working: null,
     dragging: null,
     canvases: [],
-    colors: ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"]
+    colors: ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"],
+    channelMaxWatts: [0, 0, 0, 0, 0]
   };
 
   const el = {
@@ -377,13 +378,44 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     for (let i = 0; i < CHANNELS; i++) {
       const pct = toPct(state.outputs[i]);
       const col = state.colors[i % state.colors.length];
+      const maxW = state.channelMaxWatts[i] || 0;
+      const wattStr = maxW > 0 ? ' <span style="color:var(--muted);font-size:.83rem">(' + (pct / 100 * maxW).toFixed(1) + ' W)</span>' : '';
       bars += '<div class="ch-bar-row">'
         + '<span class="ch-swatch" style="background:' + col + '"></span>'
         + '<span class="ch-name">' + (i + 1) + '</span>'
         + '<div class="ch-bar-track"><div class="ch-bar-fill" style="width:' + pct + '%;background:' + col + ';"></div></div>'
-        + '<span class="ch-bar-pct">' + pct + '%</span>'
+        + '<span class="ch-bar-pct">' + pct + '%' + wattStr + '</span>'
         + '</div>';
     }
+
+    // Dagverbruik
+    const estimateDailyWh = () => {
+      const preset = state.working || state.presets[state.activePreset];
+      if (!preset || !preset.channels) return null;
+      const scale = state.masterBrightness / 100;
+      const moonTarget = state.moonlightEnabled && state.moonlightChannel >= 0
+        ? (state.moonlightIntensity || 0) * (state.moonPhase || 0) : -1;
+      let totalWh = 0, hasWatts = false;
+      for (let i = 0; i < CHANNELS; i++) {
+        const maxW = state.channelMaxWatts[i] || 0;
+        if (maxW <= 0) continue;
+        hasWatts = true;
+        const samples = 240;
+        let sum = 0;
+        for (let j = 0; j <= samples; j++) {
+          const minute = (j / samples) * DAY_MIN;
+          let val = evaluateSmooth(preset.channels[i], minute);
+          if (i === state.moonlightChannel && moonTarget >= 0) val = Math.max(val, moonTarget);
+          sum += Math.min(4095, val * scale);
+        }
+        totalWh += (sum / (samples + 1) / 4095) * maxW * 24;
+      }
+      return hasWatts ? totalWh : null;
+    };
+    const dailyWh = estimateDailyWh();
+    const dailyRow = dailyWh !== null
+      ? '<div class="live-row" style="margin-top:4px;"><span class="live-label">Dagverbruik</span><span class="live-value">~' + (dailyWh >= 1000 ? (dailyWh / 1000).toFixed(2) + ' kWh' : dailyWh.toFixed(0) + ' Wh') + '</span></div>'
+      : '';
 
     el.live.innerHTML =
       '<div class="live-row">' + badges + '</div>'
@@ -403,7 +435,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           + '</span></div>' : '')
       + '<hr class="live-divider">'
       + '<div style="font-weight:600;font-size:.9rem;margin-bottom:2px;">Kanalen</div>'
-      + bars;
+      + bars
+      + dailyRow;
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
@@ -556,6 +589,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.moonlightChannel  = typeof s.moonlightChannel === "number" ? s.moonlightChannel : -1;
     state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : 492;
     state.moonlightActive    = !!s.moonlightActive;
+    if (Array.isArray(s.channelMaxWatts) && s.channelMaxWatts.length === CHANNELS)
+      state.channelMaxWatts = s.channelMaxWatts.map(Number);
     if (s.version) document.getElementById("versionTag").textContent = s.version;
   }
 
@@ -832,6 +867,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             el.brightnessSlider.value = state.masterBrightness;
             el.brightnessVal.textContent = state.masterBrightness + "%";
           }
+          if (Array.isArray(s.channelMaxWatts) && s.channelMaxWatts.length === CHANNELS)
+            state.channelMaxWatts = s.channelMaxWatts.map(Number);
           if (s.previewActive) state.previewMinute = s.nowMinute;
           else if (state.previewMinute === null) state.previewMinute = null;
           if (state.simulationActive) {

@@ -50,6 +50,7 @@ struct SchedulerData {
   uint8_t activePreset;
   Preset presets[MAX_PRESETS];
   String channelColors[LED_CHANNEL_COUNT];
+  float channelMaxWatts[LED_CHANNEL_COUNT];
 };
 
 struct WifiConfigData {
@@ -259,8 +260,10 @@ void initDefaultData() {
   gData.presetCount = 1;
   gData.activePreset = 0;
   fillDefaultPreset(gData.presets[0], "Default preset");
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     gData.channelColors[ch] = String(DEFAULT_COLORS[ch]);
+    gData.channelMaxWatts[ch] = 0.0f;
+  }
 }
 
 bool saveSchedulerData() {
@@ -278,6 +281,10 @@ bool saveSchedulerData() {
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
     jColors.add(gData.channelColors[ch]);
+
+  JsonArray jWatts = doc.createNestedArray("channelMaxWatts");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
+    jWatts.add(gData.channelMaxWatts[ch]);
 
   JsonArray presets = doc.createNestedArray("presets");
 
@@ -357,6 +364,12 @@ bool loadSchedulerData() {
       gData.channelColors[ch] = String((const char *)(jColors[ch] | DEFAULT_COLORS[ch]));
     else
       gData.channelColors[ch] = String(DEFAULT_COLORS[ch]);
+  }
+
+  JsonArray jWatts = doc["channelMaxWatts"].as<JsonArray>();
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    gData.channelMaxWatts[ch] = (!jWatts.isNull() && ch < jWatts.size()) ? (float)(jWatts[ch] | 0.0f) : 0.0f;
+    if (gData.channelMaxWatts[ch] < 0.0f) gData.channelMaxWatts[ch] = 0.0f;
   }
 
   for (uint8_t p = 0; p < gData.presetCount; ++p) {
@@ -760,13 +773,15 @@ void mqttPublishDiscovery() {
     pub("number", "brightness", d);
   }
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) { // Kanaal sensoren
-    DynamicJsonDocument d(512);
+    DynamicJsonDocument d(768);
     d["name"]    = String("AquaLed Kanaal ") + (ch + 1);
     d["uniq_id"] = id + "_ch" + (ch + 1);
     d["stat_t"]  = base + "/state";
-    d["val_tpl"] = String("{{ value_json.outputs[") + ch + String("] }}");
+    d["val_tpl"] = String("{{ (value_json.outputs[") + ch + String("] / 4095 * 100) | round(0) | int }}");
     d["avty_t"]  = avty;
-    d["unit_of_measurement"] = "";
+    d["unit_of_measurement"] = "%";
+    const String hexOnly = gData.channelColors[ch].length() > 1 ? gData.channelColors[ch].substring(1) : "888888";
+    d["entity_picture"] = String("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23") + hexOnly + String("'/%3E%3C/svg%3E");
     addDev(d);
     pub("sensor", String("ch") + (ch + 1), d);
     yield();
@@ -1013,6 +1028,10 @@ String stateJson() {
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
     jColors.add(gData.channelColors[ch]);
 
+  JsonArray jWatts2 = doc.createNestedArray("channelMaxWatts");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
+    jWatts2.add(gData.channelMaxWatts[ch]);
+
   JsonArray out = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
 
@@ -1057,8 +1076,10 @@ void handleGetStateLight() {
   doc["previewActive"] = previewActive;
   doc["masterEnabled"] = masterEnabled;
   doc["masterBrightness"] = masterBrightness;
-  JsonArray out = doc.createNestedArray("outputs");
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) out.add(currentOutputs[ch]);
+  JsonArray outL = doc.createNestedArray("outputs");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outL.add(currentOutputs[ch]);
+  JsonArray jWattsL = doc.createNestedArray("channelMaxWatts");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) jWattsL.add(gData.channelMaxWatts[ch]);
   sendJson(200, doc);
 }
 
@@ -1313,6 +1334,15 @@ void handleColorsSave() {
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     gData.channelColors[ch] = String((const char *)(arr[ch] | DEFAULT_COLORS[ch]));
   }
+
+  JsonArray wArr = body["channelMaxWatts"].as<JsonArray>();
+  if (!wArr.isNull() && wArr.size() == LED_CHANNEL_COUNT) {
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      float w = wArr[ch] | 0.0f;
+      gData.channelMaxWatts[ch] = w < 0.0f ? 0.0f : w;
+    }
+  }
+
   saveSchedulerData();
 
   DynamicJsonDocument resp(256);

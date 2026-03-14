@@ -193,7 +193,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     </section>
 
     <section class="card">
-      <div class="sub">Kies een kleur per kanaal voor de curvegrafieken.</div>
+      <div class="sub">Kies een kleur per kanaal voor de curvegrafieken. Stel ook het maximale vermogen (Watt) in per kanaal voor verbruiksberekeningen (0 = geen berekening).</div>
       <div class="row" style="margin-top:10px;">
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;" id="colorPickers"></div>
       </div>
@@ -310,25 +310,39 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
   let channelColors = [...defaultColors];
+  let channelMaxWatts = [0, 0, 0, 0, 0];
 
   function buildColorPickers() {
     el.colorPickers.innerHTML = "";
     for (let i = 0; i < 5; i++) {
-      const label = document.createElement("label");
-      label.style.display = "flex";
-      label.style.alignItems = "center";
-      label.style.gap = "6px";
-      label.textContent = "Kanaal " + (i + 1) + " ";
-      const input = document.createElement("input");
-      input.type = "color";
-      input.value = channelColors[i];
-      input.dataset.ch = i;
-      input.style.width = "48px";
-      input.style.height = "36px";
-      input.style.padding = "2px";
-      input.style.cursor = "pointer";
-      label.appendChild(input);
-      el.colorPickers.appendChild(label);
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:4px;";
+
+      const colorLabel = document.createElement("label");
+      colorLabel.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;";
+      colorLabel.textContent = "Kanaal " + (i + 1) + " ";
+      const colorInput = document.createElement("input");
+      colorInput.type = "color";
+      colorInput.value = channelColors[i];
+      colorInput.dataset.ch = i;
+      colorInput.style.cssText = "width:48px;height:36px;padding:2px;cursor:pointer;";
+      colorLabel.appendChild(colorInput);
+
+      const wattLabel = document.createElement("label");
+      wattLabel.style.cssText = "display:flex;align-items:center;gap:4px;margin:0;font-size:.85rem;";
+      wattLabel.textContent = "max W:";
+      const wattInput = document.createElement("input");
+      wattInput.type = "number";
+      wattInput.min = "0";
+      wattInput.step = "0.1";
+      wattInput.value = channelMaxWatts[i];
+      wattInput.dataset.wch = i;
+      wattInput.style.cssText = "width:70px;padding:4px 6px;font-size:.9rem;";
+      wattLabel.appendChild(wattInput);
+
+      wrap.appendChild(colorLabel);
+      wrap.appendChild(wattLabel);
+      el.colorPickers.appendChild(wrap);
     }
   }
 
@@ -358,6 +372,11 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       channelColors = [...s.channelColors];
       const inputs = el.colorPickers.querySelectorAll("input[type=color]");
       inputs.forEach((inp, i) => { inp.value = channelColors[i]; });
+    }
+    if (Array.isArray(s.channelMaxWatts) && s.channelMaxWatts.length === 5) {
+      channelMaxWatts = [...s.channelMaxWatts];
+      const wInputs = el.colorPickers.querySelectorAll("input[type=number]");
+      wInputs.forEach((inp, i) => { inp.value = channelMaxWatts[i]; });
     }
     const hh = Math.floor((s.nowMinute || 0) / 60);
     const mm = Math.floor((s.nowMinute || 0) % 60);
@@ -466,10 +485,13 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     try {
       const inputs = el.colorPickers.querySelectorAll("input[type=color]");
       const colors = Array.from(inputs).map(inp => inp.value);
-      await Api.saveColors({ channelColors: colors });
+      const wInputs = el.colorPickers.querySelectorAll("input[type=number]");
+      const watts = Array.from(wInputs).map(inp => parseFloat(inp.value) || 0);
+      await Api.saveColors({ channelColors: colors, channelMaxWatts: watts });
       channelColors = [...colors];
+      channelMaxWatts = [...watts];
       colorsLoaded = false;
-      setStatus(el.colorStatus, "Kleuren opgeslagen", "ok");
+      setStatus(el.colorStatus, "Kleuren en wattages opgeslagen", "ok");
     } catch (e) {
       setStatus(el.colorStatus, "Opslaan mislukt: " + e.message, "err");
     }
