@@ -1303,8 +1303,9 @@ String stateJson() {
       sumAvgSec += cloudAvgDurationSec[ch];
     }
   }
-  doc["cloudEventsPerDay"] = enabledCount > 0 ? (sumEvents / enabledCount) : 0;
-  doc["cloudAvgDurationSec"] = enabledCount > 0 ? (sumAvgSec / enabledCount) : 0;
+  // Gebruik aparte keys voor aggregate waarden zodat de per-kanaal arrays intact blijven.
+  doc["cloudEventsPerDayAvg"] = enabledCount > 0 ? (sumEvents / enabledCount) : 0;
+  doc["cloudAvgDurationSecAvg"] = enabledCount > 0 ? (sumAvgSec / enabledCount) : 0;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)

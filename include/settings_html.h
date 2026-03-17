@@ -569,7 +569,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
         channels
       });
       setStatus(el.cloudStatus, out.ok ? "Wolken simulatie opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
-      // Geen refresh na opslaan: de UI heeft al de juiste zojuist-opgeslagen waarden.
+      cloudSettingsLoaded = false;
+      await refresh();
     } catch (e) {
       setStatus(el.cloudStatus, "Opslaan mislukt: " + e.message, "err");
     }
