@@ -29,6 +29,7 @@ constexpr unsigned long PWM_UPDATE_MS = 50;
 constexpr unsigned long DEBUG_PRINT_MS = 5000;
 constexpr unsigned long WIFI_RETRY_MS = 20000;
 constexpr byte DNS_PORT = 53;
+constexpr uint8_t ALL_CHANNELS_MASK = (1u << LED_CHANNEL_COUNT) - 1u;
 
 struct KeyPoint {
   uint16_t minute;
@@ -104,6 +105,18 @@ int8_t moonlightChannel = -1;   // -1 = uitgeschakeld
 uint16_t moonlightIntensity = 492; // 0-4095 (~12% standaard)
 bool moonlightCurrentlyActive = false;
 float masterBrightness = 1.0f;  // 0.0–2.0 (0–200%), schaalsfactor over alle kanalen
+
+// Wolken simulatie
+bool cloudSimEnabled = false;
+uint8_t cloudChannelsMask = ALL_CHANNELS_MASK;
+uint16_t cloudAvgDurationSec = 5;
+uint16_t cloudEventsPerDay = 100;
+uint8_t cloudDimPercent[LED_CHANNEL_COUNT] = {50, 50, 50, 50, 50};
+uint8_t cloudCurrentDimPercent[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
+bool cloudActive = false;
+unsigned long cloudEndMs = 0;
+unsigned long cloudNextStartMs = 0;
+
 WiFiClient     mqttWifiClient;
 PubSubClient   mqttClient(mqttWifiClient);
 unsigned long lastMqttPublishMs   = 0;
@@ -154,6 +167,122 @@ uint16_t clampSimulationSeconds(int seconds) {
   if (seconds < 5) return 5;
   if (seconds > 3600) return 3600;
   return static_cast<uint16_t>(seconds);
+}
+
+uint16_t clampCloudDurationSec(int seconds) {
+  if (seconds < 1) return 1;
+  if (seconds > 3600) return 3600;
+  return static_cast<uint16_t>(seconds);
+}
+
+uint16_t clampCloudEventsPerDay(int count) {
+  if (count < 1) return 1;
+  if (count > 5000) return 5000;
+  return static_cast<uint16_t>(count);
+}
+
+uint8_t clampCloudPercent(int pct) {
+  if (pct < 0) return 0;
+  if (pct > 100) return 100;
+  return static_cast<uint8_t>(pct);
+}
+
+float random01() {
+  uint32_t r = esp_random();
+  if (r == 0) r = 1;
+  return static_cast<float>(r) / 4294967295.0f;
+}
+
+float sampleExponential(float mean) {
+  if (mean <= 0.0f) return 0.0f;
+  float u = random01();
+  if (u < 1e-6f) u = 1e-6f;
+  return -logf(u) * mean;
+}
+
+bool cloudHasSelectedChannels() {
+  return (cloudChannelsMask & ALL_CHANNELS_MASK) != 0;
+}
+
+void scheduleNextCloud(bool immediateBase = false) {
+  if (!cloudSimEnabled || !cloudHasSelectedChannels()) {
+    cloudNextStartMs = 0;
+    return;
+  }
+
+  const float meanIntervalSec = 86400.0f / static_cast<float>(cloudEventsPerDay);
+  float delaySec = sampleExponential(meanIntervalSec);
+  if (delaySec < 0.2f) delaySec = 0.2f;
+
+  const unsigned long now = millis();
+  const unsigned long base = immediateBase ? now : (cloudActive ? cloudEndMs : now);
+  cloudNextStartMs = base + static_cast<unsigned long>(delaySec * 1000.0f);
+}
+
+void stopActiveCloud() {
+  cloudActive = false;
+  cloudEndMs = 0;
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    cloudCurrentDimPercent[ch] = 0;
+  }
+}
+
+void resetCloudSimulationRuntime(bool keepNextSchedule = false) {
+  stopActiveCloud();
+  if (!keepNextSchedule) {
+    scheduleNextCloud(true);
+  }
+}
+
+int cloudNextInSeconds() {
+  if (!cloudSimEnabled || !cloudHasSelectedChannels()) return -1;
+  if (cloudActive) return 0;
+  const unsigned long now = millis();
+  if (cloudNextStartMs <= now) return 0;
+  return static_cast<int>((cloudNextStartMs - now) / 1000UL);
+}
+
+void updateCloudSimulation() {
+  if (previewActive) {
+    if (cloudActive) stopActiveCloud();
+    return;
+  }
+
+  if (!cloudSimEnabled || !cloudHasSelectedChannels()) {
+    if (cloudActive) stopActiveCloud();
+    cloudNextStartMs = 0;
+    return;
+  }
+
+  const unsigned long now = millis();
+
+  if (cloudActive) {
+    if (now >= cloudEndMs) {
+      stopActiveCloud();
+      scheduleNextCloud(false);
+    }
+    return;
+  }
+
+  if (cloudNextStartMs == 0) {
+    scheduleNextCloud(true);
+    return;
+  }
+
+  if (now < cloudNextStartMs) return;
+
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    cloudCurrentDimPercent[ch] = 0;
+    if ((cloudChannelsMask & (1u << ch)) == 0) continue;
+    const float jitter = 0.8f + random01() * 0.4f;  // ongeveer de ingestelde waarde
+    cloudCurrentDimPercent[ch] = clampCloudPercent(static_cast<int>(roundf(cloudDimPercent[ch] * jitter)));
+  }
+
+  float durationSec = sampleExponential(static_cast<float>(cloudAvgDurationSec));
+  if (durationSec < 0.3f) durationSec = 0.3f;
+
+  cloudActive = true;
+  cloudEndMs = now + static_cast<unsigned long>(durationSec * 1000.0f);
 }
 
 bool isPlaceholderSsid(const String &ssid) {
@@ -277,6 +406,15 @@ bool saveSchedulerData() {
   doc["moonlightChannel"]   = moonlightChannel;
   doc["moonlightIntensity"] = moonlightIntensity;
   doc["masterBrightness"]   = masterBrightness;
+  doc["cloudSimEnabled"]    = cloudSimEnabled;
+  doc["cloudChannelsMask"]  = cloudChannelsMask;
+  doc["cloudAvgDurationSec"] = cloudAvgDurationSec;
+  doc["cloudEventsPerDay"]   = cloudEventsPerDay;
+
+  JsonArray jCloudPct = doc.createNestedArray("cloudDimPercent");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    jCloudPct.add(cloudDimPercent[ch]);
+  }
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -356,6 +494,17 @@ bool loadSchedulerData() {
   {
     float b = doc["masterBrightness"] | 1.0f;
     masterBrightness = (b < 0.0f) ? 0.0f : (b > 2.0f) ? 2.0f : b;
+  }
+  cloudSimEnabled    = doc["cloudSimEnabled"] | false;
+  cloudChannelsMask  = static_cast<uint8_t>(doc["cloudChannelsMask"] | ALL_CHANNELS_MASK) & ALL_CHANNELS_MASK;
+  cloudAvgDurationSec = clampCloudDurationSec(doc["cloudAvgDurationSec"] | 5);
+  cloudEventsPerDay   = clampCloudEventsPerDay(doc["cloudEventsPerDay"] | 100);
+  JsonArray jCloudPct = doc["cloudDimPercent"].as<JsonArray>();
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    cloudDimPercent[ch] = (!jCloudPct.isNull() && ch < jCloudPct.size())
+                              ? clampCloudPercent(jCloudPct[ch] | 50)
+                              : 50;
+    cloudCurrentDimPercent[ch] = 0;
   }
 
   JsonArray jColors = doc["channelColors"].as<JsonArray>();
@@ -971,6 +1120,10 @@ void updateOutputs() {
     }
     // Helderheidsscaling: schaal target met masterBrightness, limiteer op 4095
     target = fminf(target * masterBrightness, 4095.0f);
+    // Wolken simulatie: dim geselecteerde kanalen met (ongeveer) ingestelde percentages.
+    if (cloudActive && (cloudChannelsMask & (1u << ch))) {
+      target *= (100.0f - cloudCurrentDimPercent[ch]) / 100.0f;
+    }
     // Altijd faden in perceptuele ruimte — behalve bij directe preview (slider slepen)
     if (previewActive && previewDirect) {
       smoothOutputs[ch] = target;
@@ -1040,6 +1193,19 @@ String stateJson() {
   doc["moonPhase"]               = calcMoonPhase();
   doc["moonlightActive"]         = moonlightCurrentlyActive;
   doc["masterBrightness"]        = masterBrightness;
+  doc["cloudSimEnabled"]         = cloudSimEnabled;
+  doc["cloudActive"]             = cloudActive;
+  doc["cloudChannelsMask"]       = cloudChannelsMask;
+  doc["cloudAvgDurationSec"]     = cloudAvgDurationSec;
+  doc["cloudEventsPerDay"]       = cloudEventsPerDay;
+  doc["cloudNextInSec"]          = cloudNextInSeconds();
+
+  JsonArray jCloudPct = doc.createNestedArray("cloudDimPercent");
+  JsonArray jCloudCurrentPct = doc.createNestedArray("cloudCurrentDimPercent");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    jCloudPct.add(cloudDimPercent[ch]);
+    jCloudCurrentPct.add(cloudCurrentDimPercent[ch]);
+  }
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -1085,7 +1251,7 @@ void handleGetState() {
 }
 
 void handleGetStateLight() {
-  DynamicJsonDocument doc(512);
+  DynamicJsonDocument doc(768);
   doc["nowMinute"] = getMinuteOfDay();
   doc["dateTime"] = currentDateTimeText();
   doc["simulationActive"] = simulationActive;
@@ -1093,6 +1259,11 @@ void handleGetStateLight() {
   doc["previewActive"] = previewActive;
   doc["masterEnabled"] = masterEnabled;
   doc["masterBrightness"] = masterBrightness;
+  doc["cloudSimEnabled"] = cloudSimEnabled;
+  doc["cloudActive"] = cloudActive;
+  doc["cloudNextInSec"] = cloudNextInSeconds();
+  doc["cloudEventsPerDay"] = cloudEventsPerDay;
+  doc["cloudAvgDurationSec"] = cloudAvgDurationSec;
   JsonArray outL = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outL.add(currentOutputs[ch]);
   JsonArray jWattsL = doc.createNestedArray("channelMaxWatts");
@@ -1461,6 +1632,12 @@ void handleScheduleExport() {
   DynamicJsonDocument doc(28672);
   doc["activePreset"]         = gData.activePreset;
   doc["simulationDaySeconds"] = simulationDaySeconds;
+  doc["cloudSimEnabled"]      = cloudSimEnabled;
+  doc["cloudChannelsMask"]    = cloudChannelsMask;
+  doc["cloudAvgDurationSec"]  = cloudAvgDurationSec;
+  doc["cloudEventsPerDay"]    = cloudEventsPerDay;
+  JsonArray jCloudPct = doc.createNestedArray("cloudDimPercent");
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) jCloudPct.add(cloudDimPercent[ch]);
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
     jColors.add(gData.channelColors[ch]);
@@ -1522,6 +1699,21 @@ void handleScheduleImport() {
   gData = newData;
   if (!body["simulationDaySeconds"].isNull())
     simulationDaySeconds = clampSimulationSeconds(body["simulationDaySeconds"]);
+  if (!body["cloudSimEnabled"].isNull())
+    cloudSimEnabled = body["cloudSimEnabled"] | cloudSimEnabled;
+  if (!body["cloudChannelsMask"].isNull())
+    cloudChannelsMask = static_cast<uint8_t>(body["cloudChannelsMask"].as<int>()) & ALL_CHANNELS_MASK;
+  if (!body["cloudAvgDurationSec"].isNull())
+    cloudAvgDurationSec = clampCloudDurationSec(body["cloudAvgDurationSec"]);
+  if (!body["cloudEventsPerDay"].isNull())
+    cloudEventsPerDay = clampCloudEventsPerDay(body["cloudEventsPerDay"]);
+  JsonArrayConst jCloudPct = body["cloudDimPercent"].as<JsonArrayConst>();
+  if (!jCloudPct.isNull() && jCloudPct.size() == LED_CHANNEL_COUNT) {
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      cloudDimPercent[ch] = clampCloudPercent(jCloudPct[ch] | cloudDimPercent[ch]);
+    }
+  }
+  resetCloudSimulationRuntime(false);
   saveSchedulerData();
   DynamicJsonDocument resp(256);
   resp["ok"]          = true;
@@ -1569,6 +1761,51 @@ void handleMoonlightSave() {
   sendJson(200, resp);
 }
 
+void handleCloudSave() {
+  DynamicJsonDocument body(1024);
+  if (deserializeJson(body, server.arg("plain"))) {
+    DynamicJsonDocument resp(256);
+    resp["ok"] = false;
+    resp["error"] = "invalid json";
+    return sendJson(400, resp);
+  }
+
+  if (!body["enabled"].isNull()) {
+    cloudSimEnabled = body["enabled"] | false;
+  }
+
+  if (!body["avgDurationSec"].isNull()) {
+    cloudAvgDurationSec = clampCloudDurationSec(body["avgDurationSec"] | cloudAvgDurationSec);
+  }
+
+  if (!body["eventsPerDay"].isNull()) {
+    cloudEventsPerDay = clampCloudEventsPerDay(body["eventsPerDay"] | cloudEventsPerDay);
+  }
+
+  if (!body["channelsMask"].isNull()) {
+    cloudChannelsMask = static_cast<uint8_t>(body["channelsMask"].as<int>()) & ALL_CHANNELS_MASK;
+  }
+
+  JsonArray dimPct = body["dimPercent"].as<JsonArray>();
+  if (!dimPct.isNull() && dimPct.size() == LED_CHANNEL_COUNT) {
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      cloudDimPercent[ch] = clampCloudPercent(dimPct[ch] | cloudDimPercent[ch]);
+    }
+  }
+
+  resetCloudSimulationRuntime(false);
+  saveSchedulerData();
+
+  DynamicJsonDocument resp(512);
+  resp["ok"] = true;
+  resp["cloudSimEnabled"] = cloudSimEnabled;
+  resp["cloudChannelsMask"] = cloudChannelsMask;
+  resp["cloudAvgDurationSec"] = cloudAvgDurationSec;
+  resp["cloudEventsPerDay"] = cloudEventsPerDay;
+  resp["cloudNextInSec"] = cloudNextInSeconds();
+  sendJson(200, resp);
+}
+
 void handleBrightnessSet() {
   DynamicJsonDocument body(256);
   if (deserializeJson(body, server.arg("plain"))) {
@@ -1608,6 +1845,7 @@ void setupWebServer() {
   server.on("/api/brightness/set",    HTTP_POST, handleBrightnessSet);
   server.on("/api/mqtt/save",         HTTP_POST, handleMqttSave);
   server.on("/api/moonlight/save",    HTTP_POST, handleMoonlightSave);
+  server.on("/api/cloud/save",        HTTP_POST, handleCloudSave);
   server.on("/api/schedule/export",   HTTP_GET,  handleScheduleExport);
   server.on("/api/schedule/import",   HTTP_POST, handleScheduleImport);
 
@@ -1852,6 +2090,7 @@ void setup() {
 
   printCliHelp();
   Serial.println("[AquaLed] Klaar.");
+  resetCloudSimulationRuntime(false);
 }
 
 void loop() {
@@ -1884,6 +2123,7 @@ void loop() {
   handleButton();
 
   const unsigned long now = millis();
+  updateCloudSimulation();
   if (now - lastPwmUpdateMs >= PWM_UPDATE_MS) {
     lastPwmUpdateMs = now;
     updateOutputs();

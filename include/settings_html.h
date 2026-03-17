@@ -234,6 +234,37 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     </section>
 
     <section class="card">
+      <h2>Wolken simulatie</h2>
+      <div class="sub">Op willekeurige momenten dimt het licht tijdelijk en herstelt daarna automatisch. Het aantal per dag en de duur worden gemiddeld aangehouden.</div>
+      <div class="row" style="margin-top:10px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <label style="margin:0;width:auto">Wolken simulatie inschakelen</label>
+          <input id="cloudEnabled" type="checkbox" style="width:auto;accent-color:var(--brand);">
+        </div>
+        <div>
+          <label for="cloudAvgDurationSec">Gemiddelde duur per wolk (sec)</label>
+          <input id="cloudAvgDurationSec" type="number" min="1" max="3600" value="5">
+        </div>
+        <div>
+          <label for="cloudEventsPerDay">Gemiddeld aantal keer per dag</label>
+          <input id="cloudEventsPerDay" type="number" min="1" max="5000" value="100">
+        </div>
+        <div>
+          <label>Channels waarop dit geldt</label>
+          <div id="cloudChannelSelect" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+        </div>
+        <div>
+          <label>Dimming per channel (%)</label>
+          <div id="cloudPercentInputs" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px;">
+        <button id="btnCloudSave" class="primary">Opslaan</button>
+      </div>
+      <div id="cloudStatus" class="status"></div>
+    </section>
+
+    <section class="card">
       <h2>Firmware update (OTA)</h2>
       <div class="sub">Upload een nieuw firmware bestand (.bin) om de controller draadloos bij te werken.</div>
       <div class="row" style="margin-top:10px;">
@@ -282,6 +313,13 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     moonlightIntensityVal: document.getElementById("moonlightIntensityVal"),
     btnMoonlightSave:    document.getElementById("btnMoonlightSave"),
     moonlightStatus:     document.getElementById("moonlightStatus"),
+    cloudEnabled:        document.getElementById("cloudEnabled"),
+    cloudAvgDurationSec: document.getElementById("cloudAvgDurationSec"),
+    cloudEventsPerDay:   document.getElementById("cloudEventsPerDay"),
+    cloudChannelSelect:  document.getElementById("cloudChannelSelect"),
+    cloudPercentInputs:  document.getElementById("cloudPercentInputs"),
+    btnCloudSave:        document.getElementById("btnCloudSave"),
+    cloudStatus:         document.getElementById("cloudStatus"),
     firmwareFile: document.getElementById("firmwareFile"),
     btnOtaUpload: document.getElementById("btnOtaUpload"),
     otaProgress:  document.getElementById("otaProgress"),
@@ -305,12 +343,14 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     setTime(payload) { return this.call("/api/time/set", "POST", payload); },
     saveColors(payload) { return this.call("/api/colors/save", "POST", payload); },
     saveMqtt(payload)   { return this.call("/api/mqtt/save",   "POST", payload); },
-    saveMoonlight(payload) { return this.call("/api/moonlight/save", "POST", payload); }
+    saveMoonlight(payload) { return this.call("/api/moonlight/save", "POST", payload); },
+    saveCloud(payload) { return this.call("/api/cloud/save", "POST", payload); }
   };
 
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
   let channelColors = [...defaultColors];
   let channelMaxWatts = [0, 0, 0, 0, 0];
+  let cloudDimPercent = [50, 50, 50, 50, 50];
 
   function buildColorPickers() {
     el.colorPickers.innerHTML = "";
@@ -351,6 +391,59 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     target.className = "status" + (kind ? " " + kind : "");
   }
 
+  function buildCloudEditors() {
+    el.cloudChannelSelect.innerHTML = "";
+    el.cloudPercentInputs.innerHTML = "";
+
+    for (let i = 0; i < 5; i++) {
+      const chWrap = document.createElement("label");
+      chWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;";
+      chWrap.innerHTML = '<input type="checkbox" data-cloud-ch="' + i + '" checked style="width:auto;accent-color:var(--brand);"> Kanaal ' + (i + 1);
+      el.cloudChannelSelect.appendChild(chWrap);
+
+      const pctWrap = document.createElement("label");
+      pctWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;";
+      pctWrap.textContent = "K" + (i + 1) + ":";
+      const pctInput = document.createElement("input");
+      pctInput.type = "number";
+      pctInput.min = "0";
+      pctInput.max = "100";
+      pctInput.value = String(cloudDimPercent[i]);
+      pctInput.dataset.cloudPct = i;
+      pctInput.style.cssText = "width:68px;padding:4px 6px;font-size:.9rem;";
+      pctWrap.appendChild(pctInput);
+      el.cloudPercentInputs.appendChild(pctWrap);
+    }
+  }
+
+  function getCloudMaskFromUi() {
+    let mask = 0;
+    const checks = el.cloudChannelSelect.querySelectorAll("input[data-cloud-ch]");
+    checks.forEach((c) => {
+      const idx = Number(c.dataset.cloudCh);
+      if (c.checked) mask |= (1 << idx);
+    });
+    return mask;
+  }
+
+  function setCloudUiFromState(s) {
+    el.cloudEnabled.checked = !!s.cloudSimEnabled;
+    if (typeof s.cloudAvgDurationSec === "number") el.cloudAvgDurationSec.value = String(s.cloudAvgDurationSec);
+    if (typeof s.cloudEventsPerDay === "number") el.cloudEventsPerDay.value = String(s.cloudEventsPerDay);
+    if (Array.isArray(s.cloudDimPercent) && s.cloudDimPercent.length === 5) {
+      cloudDimPercent = s.cloudDimPercent.map((v) => Math.max(0, Math.min(100, Number(v) || 0)));
+      const pctInputs = el.cloudPercentInputs.querySelectorAll("input[data-cloud-pct]");
+      pctInputs.forEach((inp, i) => { inp.value = String(cloudDimPercent[i]); });
+    }
+    if (typeof s.cloudChannelsMask === "number") {
+      const checks = el.cloudChannelSelect.querySelectorAll("input[data-cloud-ch]");
+      checks.forEach((c) => {
+        const idx = Number(c.dataset.cloudCh);
+        c.checked = (s.cloudChannelsMask & (1 << idx)) !== 0;
+      });
+    }
+  }
+
   let colorsLoaded = false;
   function renderState(s) {
     if (s.ssid) el.ssid.value = s.ssid;
@@ -389,6 +482,16 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       return "maanlicht: AAN op " + ch + " — " + e + " " + pct + "% vol → vanavond " + out + "%\n" +
              "           (overdag volgt preset; 's nachts: max " + (s.moonlightIntensity||0) + "/4095 × maanfase)";
     })();
+    const cloudLine = (() => {
+      if (!s.cloudSimEnabled) return "wolken: uitgeschakeld";
+      const next = typeof s.cloudNextInSec === "number"
+        ? (s.cloudNextInSec <= 0 ? "nu" : (s.cloudNextInSec + " sec"))
+        : "-";
+      return "wolken: " + (s.cloudActive ? "actief" : "wachten")
+        + " | gem. " + (s.cloudEventsPerDay || 100) + "x/dag"
+        + " | duur ~" + (s.cloudAvgDurationSec || 5) + " sec"
+        + " | volgende: " + next;
+    })();
     el.live.textContent =
       "wifiConnected: " + (!!s.wifiConnected) + "\n" +
       "ssid: " + (s.ssid || "-") + "\n" +
@@ -402,7 +505,8 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "manualTime: " + (!!s.manualTime) + "\n" +
       "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
       "uptime: " + (()=>{ const u=s.uptimeSec||0; const uh=Math.floor(u/3600); const um=Math.floor((u%3600)/60); const us=u%60; return String(uh).padStart(2,"0")+":"+String(um).padStart(2,"0")+":"+String(us).padStart(2,"0"); })() + "\n" +
-      moonLine;
+      moonLine + "\n" +
+      cloudLine;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
     // Maanlicht
     if (typeof s.moonlightEnabled === "boolean") el.moonlightEnabled.checked = s.moonlightEnabled;
@@ -411,6 +515,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       el.moonlightIntensity.value = s.moonlightIntensity;
       el.moonlightIntensityVal.textContent = s.moonlightIntensity;
     }
+    setCloudUiFromState(s);
   }
 
   async function refresh() {
@@ -435,6 +540,27 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       setStatus(el.moonlightStatus, out.ok ? "Maanlicht opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
     } catch (e) {
       setStatus(el.moonlightStatus, "Opslaan mislukt: " + e.message, "err");
+    }
+  }
+
+  async function saveCloud() {
+    try {
+      const pctInputs = el.cloudPercentInputs.querySelectorAll("input[data-cloud-pct]");
+      const dimPercent = Array.from(pctInputs).map((inp) => {
+        const v = Number(inp.value);
+        return Math.max(0, Math.min(100, Number.isFinite(v) ? v : 50));
+      });
+      const out = await Api.saveCloud({
+        enabled: el.cloudEnabled.checked,
+        avgDurationSec: Number(el.cloudAvgDurationSec.value) || 5,
+        eventsPerDay: Number(el.cloudEventsPerDay.value) || 100,
+        channelsMask: getCloudMaskFromUi(),
+        dimPercent
+      });
+      setStatus(el.cloudStatus, out.ok ? "Wolken simulatie opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
+      await refresh();
+    } catch (e) {
+      setStatus(el.cloudStatus, "Opslaan mislukt: " + e.message, "err");
     }
   }
 
@@ -503,6 +629,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     el.btnColorSave.onclick = saveColors;
     el.btnMqttSave.onclick  = saveMqtt;
     el.btnMoonlightSave.onclick = saveMoonlight;
+    el.btnCloudSave.onclick = saveCloud;
     el.moonlightIntensity.oninput = () => { el.moonlightIntensityVal.textContent = el.moonlightIntensity.value; };
     el.btnOtaUpload.onclick = () => {
       const file = el.firmwareFile.files[0];
@@ -548,6 +675,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
   async function boot() {
     buildColorPickers();
+    buildCloudEditors();
     bind();
     await refresh();
     setInterval(async () => {

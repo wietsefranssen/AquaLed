@@ -128,6 +128,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     moonlightChannel: -1,
     moonlightIntensity: 492,
     moonlightActive: false,
+    cloudSimEnabled: false,
+    cloudActive: false,
+    cloudNextInSec: -1,
+    cloudEventsPerDay: 100,
+    cloudAvgDurationSec: 5,
     working: null,
     dragging: null,
     canvases: [],
@@ -373,6 +378,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     else badges += '<span class="live-badge badge-off">UIT</span> ';
     if (simOn) badges += '<span class="live-badge badge-sim">SIM ' + state.simulationDaySeconds + 's</span> ';
     if (prevOn) badges += '<span class="live-badge badge-preview">PREVIEW</span> ';
+    if (state.cloudSimEnabled) {
+      badges += '<span class="live-badge badge-sim">WOLKEN ' + (state.cloudActive ? 'ACTIEF' : 'AAN') + '</span> ';
+    }
 
     let bars = '';
     for (let i = 0; i < CHANNELS; i++) {
@@ -422,6 +430,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       + '<hr class="live-divider">'
       + '<div class="live-row"><span class="live-label">Preset</span><span class="live-value">' + (state.presets[state.activePreset]?.name || "-") + '</span></div>'
       + '<div class="live-row"><span class="live-label">Datum</span><span class="live-value">' + (state.dateTime || "-") + '</span></div>'
+        + (state.cloudSimEnabled
+          ? '<div class="live-row"><span class="live-label">Volgende wolk</span><span class="live-value">'
+            + (state.cloudActive ? 'nu actief' : (state.cloudNextInSec <= 0 ? 'binnenkort' : ('over ' + state.cloudNextInSec + ' sec')))
+            + ' (gem. ' + state.cloudEventsPerDay + 'x/dag, ~' + state.cloudAvgDurationSec + ' sec)</span></div>'
+          : '')
       + (state.moonlightEnabled && state.moonlightChannel >= 0 ? '<div class="live-row"><span class="live-label">Maanlicht</span><span class="live-value">'
           + (()=>{
               const p = Math.round(state.moonPhase * 100);
@@ -592,6 +605,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     state.moonlightChannel  = typeof s.moonlightChannel === "number" ? s.moonlightChannel : -1;
     state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : 492;
     state.moonlightActive    = !!s.moonlightActive;
+    state.cloudSimEnabled    = !!s.cloudSimEnabled;
+    state.cloudActive        = !!s.cloudActive;
+    state.cloudNextInSec     = typeof s.cloudNextInSec === "number" ? s.cloudNextInSec : -1;
+    state.cloudEventsPerDay  = typeof s.cloudEventsPerDay === "number" ? s.cloudEventsPerDay : 100;
+    state.cloudAvgDurationSec = typeof s.cloudAvgDurationSec === "number" ? s.cloudAvgDurationSec : 5;
     if (Array.isArray(s.channelMaxWatts) && s.channelMaxWatts.length === CHANNELS)
       state.channelMaxWatts = s.channelMaxWatts.map(Number);
     if (s.version) document.getElementById("versionTag").textContent = s.version;
@@ -865,6 +883,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           state.simulationActive = !!s.simulationActive;
           state.simulationDaySeconds = Number(s.simulationDaySeconds || state.simulationDaySeconds);
           state.masterEnabled = s.masterEnabled !== false;
+          state.cloudSimEnabled = !!s.cloudSimEnabled;
+          state.cloudActive = !!s.cloudActive;
+          if (typeof s.cloudNextInSec === "number") state.cloudNextInSec = s.cloudNextInSec;
+          if (typeof s.cloudEventsPerDay === "number") state.cloudEventsPerDay = s.cloudEventsPerDay;
+          if (typeof s.cloudAvgDurationSec === "number") state.cloudAvgDurationSec = s.cloudAvgDurationSec;
           if (typeof s.masterBrightness === "number") {
             state.masterBrightness = Math.round(s.masterBrightness * 100);
             el.brightnessSlider.value = state.masterBrightness;
