@@ -58,6 +58,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
     <button id="btnOverwrite">Overschrijf</button>
     <button id="btnDelete" style="color:#922b21;border-color:#e6a19a;">Verwijder</button>
+    <button id="btnCurveEditLock" title="Voorkom per ongeluk aanpassen van de curve">🔒 Bewerken vergrendeld</button>
     <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Export</button>
     <button id="btnImport" title="Importeer presets uit JSON-bestand">⬆ Import</button>
     <input id="fileImport" type="file" accept=".json" style="display:none">
@@ -133,6 +134,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     cloudNextInSec: -1,
     cloudEventsPerDay: 100,
     cloudAvgDurationSec: 5,
+    curveEditUnlocked: false,
     working: null,
     dragging: null,
     canvases: [],
@@ -146,6 +148,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     btnSaveNew: document.getElementById("btnSaveNew"),
     btnOverwrite: document.getElementById("btnOverwrite"),
     btnDelete: document.getElementById("btnDelete"),
+    btnCurveEditLock: document.getElementById("btnCurveEditLock"),
     status: document.getElementById("status"),
     channels: document.getElementById("channels"),
     live: document.getElementById("live"),
@@ -518,6 +521,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     c.addEventListener("contextmenu", e => e.preventDefault());
 
     c.addEventListener("pointerdown", (e) => {
+      if (!state.curveEditUnlocked) {
+        state.dragging = null;
+        return;
+      }
       e.preventDefault();
       const r = c.getBoundingClientRect();
       const x = e.clientX - r.left;
@@ -597,6 +604,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
   }
 
+  function updateCurveEditLockUi() {
+    if (!el.btnCurveEditLock) return;
+    const unlocked = !!state.curveEditUnlocked;
+    el.btnCurveEditLock.textContent = unlocked ? "🔓 Bewerken ontgrendeld" : "🔒 Bewerken vergrendeld";
+    el.btnCurveEditLock.style.background = unlocked ? "#fff3cd" : "#fff";
+    el.btnCurveEditLock.style.borderColor = unlocked ? "#d8b861" : "#b7c9bc";
+    el.btnCurveEditLock.style.color = unlocked ? "#6a4f00" : "#102018";
+    state.canvases.forEach((c) => {
+      c.style.cursor = unlocked ? "crosshair" : "default";
+      c.style.opacity = unlocked ? "1" : "0.88";
+    });
+  }
+
   function mergeState(s) {
     state.presets = s.presets || [];
     state.activePreset = s.activePreset || 0;
@@ -667,6 +687,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
   async function boot() {
     buildChannels();
+    updateCurveEditLockUi();
     await loadState();
     setStatus("Verbonden", false);
 
@@ -709,6 +730,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       } catch (e) {
         setStatus("Verwijderen mislukt: " + e.message, true);
       }
+    };
+
+    el.btnCurveEditLock.onclick = () => {
+      state.curveEditUnlocked = !state.curveEditUnlocked;
+      if (!state.curveEditUnlocked) state.dragging = null;
+      updateCurveEditLockUi();
+      setStatus(state.curveEditUnlocked ? "Curve bewerken: ONTGRENDELD" : "Curve bewerken: VERGRENDELD", false);
     };
 
     el.btnSimStart.onclick = async () => {
