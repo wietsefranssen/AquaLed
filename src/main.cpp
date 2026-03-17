@@ -184,7 +184,7 @@ uint16_t clampCloudDurationSec(int seconds) {
 }
 
 uint16_t clampCloudMinDurationSec(int seconds) {
-  if (seconds < 10) return 10;
+  if (seconds < 1) return 1;
   if (seconds > 3600) return 3600;
   return static_cast<uint16_t>(seconds);
 }
@@ -1923,8 +1923,18 @@ void handleCloudSave() {
   // Nieuw formaat: per kanaal objecten
   JsonArray channels = body["channels"].as<JsonArray>();
   if (!channels.isNull() && channels.size() == LED_CHANNEL_COUNT) {
+    Serial.println("=== CLOUD SAVE: Verwerking per-kanaal payload ===");
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
       JsonObject cfg = channels[ch].as<JsonObject>();
+      Serial.printf("CH%d IN: enabled=%d, avg=%d, min=%d, events=%d, dim=%d\n", 
+        ch, 
+        cfg["enabled"].as<int>(), 
+        cfg["avgDurationSec"].as<int>(),
+        cfg["minDurationSec"].as<int>(),
+        cfg["eventsPerDay"].as<int>(),
+        cfg["dimPercent"].as<int>()
+      );
+      
       cloudChannelEnabled[ch] = cfg["enabled"].isNull() ? cloudChannelEnabled[ch] : (cfg["enabled"] | cloudChannelEnabled[ch]);
       cloudAvgDurationSec[ch] = cfg["avgDurationSec"].isNull() ? cloudAvgDurationSec[ch] : clampCloudDurationSec(cfg["avgDurationSec"] | cloudAvgDurationSec[ch]);
       cloudMinDurationSec[ch] = cfg["minDurationSec"].isNull() ? cloudMinDurationSec[ch] : clampCloudMinDurationSec(cfg["minDurationSec"] | cloudMinDurationSec[ch]);
@@ -1933,6 +1943,15 @@ void handleCloudSave() {
       if (cloudAvgDurationSec[ch] < cloudMinDurationSec[ch]) {
         cloudAvgDurationSec[ch] = cloudMinDurationSec[ch];
       }
+      
+      Serial.printf("CH%d OUT: enabled=%d, avg=%d, min=%d, events=%d, dim=%d\n", 
+        ch, 
+        cloudChannelEnabled[ch],
+        cloudAvgDurationSec[ch],
+        cloudMinDurationSec[ch],
+        cloudEventsPerDay[ch],
+        cloudDimPercent[ch]
+      );
     }
   } else {
     // Backward compatibility met oude payload

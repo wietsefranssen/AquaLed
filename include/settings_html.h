@@ -235,7 +235,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
     <section class="card">
       <h2>Wolken simulatie</h2>
-      <div class="sub">Per kanaal stel je in: dimpercentage, gemiddelde duur, minimum duur (minimaal 10 sec) en frequentie per dag. Elke wolk fade-in en fade-out samen over de volledige wolkduur. Wolken op meerdere kanalen kunnen tegelijk actief zijn.</div>
+      <div class="sub">Per kanaal stel je in: dimpercentage, gemiddelde duur, minimum duur en frequentie per dag. Elke wolk fade-in en fade-out samen over de volledige wolkduur. Wolken op meerdere kanalen kunnen tegelijk actief zijn.</div>
       <div class="row" style="margin-top:10px;">
         <div style="display:flex;align-items:center;gap:12px;">
           <label style="margin:0;width:auto">Wolken simulatie inschakelen</label>
@@ -335,12 +335,16 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
   let channelColors = [...defaultColors];
   let channelMaxWatts = [0, 0, 0, 0, 0];
+  const CLOUD_DEFAULT_AVG_DURATION_SEC = 30;
+  const CLOUD_DEFAULT_MIN_DURATION_SEC = 10;
+  const CLOUD_DEFAULT_EVENTS_PER_DAY = 100;
+  const CLOUD_DEFAULT_DIM_PERCENT = 50;
   let cloudSettings = Array.from({ length: 5 }, () => ({
     enabled: true,
-    avgDurationSec: 30,
-    minDurationSec: 10,
-    eventsPerDay: 100,
-    dimPercent: 50
+    avgDurationSec: CLOUD_DEFAULT_AVG_DURATION_SEC,
+    minDurationSec: CLOUD_DEFAULT_MIN_DURATION_SEC,
+    eventsPerDay: CLOUD_DEFAULT_EVENTS_PER_DAY,
+    dimPercent: CLOUD_DEFAULT_DIM_PERCENT
   }));
 
   function buildColorPickers() {
@@ -391,7 +395,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
         '<label style="margin:0;font-size:.84rem;">Kanaal ' + (i + 1) + '<br><input type="checkbox" data-cloud-enabled="' + i + '" style="width:auto;accent-color:var(--brand);"></label>' +
         '<label style="margin:0;font-size:.84rem;">Dimming %<br><input type="number" min="0" max="100" data-cloud-dim="' + i + '" style="width:100%;"></label>' +
         '<label style="margin:0;font-size:.84rem;">Gem. duur (sec)<br><input type="number" min="1" max="3600" data-cloud-avg="' + i + '" style="width:100%;"></label>' +
-        '<label style="margin:0;font-size:.84rem;">Min duur (sec)<br><input type="number" min="10" max="3600" data-cloud-min="' + i + '" style="width:100%;"></label>' +
+        '<label style="margin:0;font-size:.84rem;">Min duur (sec)<br><input type="number" min="1" max="3600" data-cloud-min="' + i + '" style="width:100%;"></label>' +
         '<label style="margin:0;font-size:.84rem;">Keer per dag<br><input type="number" min="1" max="5000" data-cloud-day="' + i + '" style="width:100%;"></label>';
       el.cloudChannelTable.appendChild(row);
     }
@@ -409,10 +413,10 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     for (let i = 0; i < 5; i++) {
       cloudSettings[i] = {
         enabled: enabledArr ? !!enabledArr[i] : true,
-        avgDurationSec: Math.max(1, Number(avgArr ? avgArr[i] : 30) || 30),
-        minDurationSec: Math.max(10, Number(minArr ? minArr[i] : 10) || 10),
-        eventsPerDay: Math.max(1, Number(dayArr ? dayArr[i] : 100) || 100),
-        dimPercent: Math.max(0, Math.min(100, Number(dimArr ? dimArr[i] : 50) || 50))
+        avgDurationSec: Math.max(1, Number(avgArr ? avgArr[i] : CLOUD_DEFAULT_AVG_DURATION_SEC) || CLOUD_DEFAULT_AVG_DURATION_SEC),
+        minDurationSec: Math.max(1, Number(minArr ? minArr[i] : CLOUD_DEFAULT_MIN_DURATION_SEC) || CLOUD_DEFAULT_MIN_DURATION_SEC),
+        eventsPerDay: Math.max(1, Number(dayArr ? dayArr[i] : CLOUD_DEFAULT_EVENTS_PER_DAY) || CLOUD_DEFAULT_EVENTS_PER_DAY),
+        dimPercent: Math.max(0, Math.min(100, Number(dimArr ? dimArr[i] : CLOUD_DEFAULT_DIM_PERCENT) || CLOUD_DEFAULT_DIM_PERCENT))
       };
       if (cloudSettings[i].avgDurationSec < cloudSettings[i].minDurationSec) {
         cloudSettings[i].avgDurationSec = cloudSettings[i].minDurationSec;
@@ -434,6 +438,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   }
 
   let colorsLoaded = false;
+  let cloudSettingsLoaded = false;
   function renderState(s) {
     if (s.ssid) el.ssid.value = s.ssid;
     if (typeof s.otaPassword === "string") el.otaPassword.value = s.otaPassword;
@@ -502,7 +507,10 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       el.moonlightIntensity.value = s.moonlightIntensity;
       el.moonlightIntensityVal.textContent = s.moonlightIntensity;
     }
-    setCloudUiFromState(s);
+    if (!cloudSettingsLoaded) {
+      cloudSettingsLoaded = true;
+      setCloudUiFromState(s);
+    }
   }
 
   async function refresh() {
@@ -540,24 +548,28 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
       const channels = [];
       for (let i = 0; i < 5; i++) {
-        const minSec = Math.max(10, Number(mIn[i]?.value) || 10);
-        const avgSecRaw = Math.max(1, Number(aIn[i]?.value) || 30);
+        const minSec = Math.max(1, Number(mIn[i]?.value) || 1);
+        const avgSecRaw = Math.max(1, Number(aIn[i]?.value) || CLOUD_DEFAULT_AVG_DURATION_SEC);
         const avgSec = Math.max(minSec, avgSecRaw);
+        const eventsPerDay = Math.max(1, Number(pIn[i]?.value) || CLOUD_DEFAULT_EVENTS_PER_DAY);
+        console.log(`Channel ${i}: enabled=${eIn[i]?.checked}, minSec=${minSec}, avgSec=${avgSec}, eventsPerDay=${eventsPerDay}, dimPercent=${Number(dIn[i]?.value)}`);
+        const dimPercent = Math.max(0, Math.min(100, Number(dIn[i]?.value) || CLOUD_DEFAULT_DIM_PERCENT));
         channels.push({
           enabled: !!eIn[i]?.checked,
-          dimPercent: Math.max(0, Math.min(100, Number(dIn[i]?.value) || 50)),
+          dimPercent,
           avgDurationSec: avgSec,
           minDurationSec: minSec,
-          eventsPerDay: Math.max(1, Number(pIn[i]?.value) || 100)
+          eventsPerDay
         });
       }
+      console.log("Cloud save payload:", JSON.stringify(channels));
 
       const out = await Api.saveCloud({
         enabled: el.cloudEnabled.checked,
         channels
       });
       setStatus(el.cloudStatus, out.ok ? "Wolken simulatie opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
-      await refresh();
+      // Geen refresh na opslaan: de UI heeft al de juiste zojuist-opgeslagen waarden.
     } catch (e) {
       setStatus(el.cloudStatus, "Opslaan mislukt: " + e.message, "err");
     }
