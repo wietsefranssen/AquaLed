@@ -235,27 +235,15 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
     <section class="card">
       <h2>Wolken simulatie</h2>
-      <div class="sub">Op willekeurige momenten dimt het licht tijdelijk en herstelt daarna automatisch. Het aantal per dag en de duur worden gemiddeld aangehouden.</div>
+      <div class="sub">Per kanaal stel je in: dimpercentage, gemiddelde duur, minimum duur (minimaal 10 sec) en frequentie per dag. Elke wolk fade-in en fade-out samen over de volledige wolkduur. Wolken op meerdere kanalen kunnen tegelijk actief zijn.</div>
       <div class="row" style="margin-top:10px;">
         <div style="display:flex;align-items:center;gap:12px;">
           <label style="margin:0;width:auto">Wolken simulatie inschakelen</label>
           <input id="cloudEnabled" type="checkbox" style="width:auto;accent-color:var(--brand);">
         </div>
         <div>
-          <label for="cloudAvgDurationSec">Gemiddelde duur per wolk (sec)</label>
-          <input id="cloudAvgDurationSec" type="number" min="1" max="3600" value="5">
-        </div>
-        <div>
-          <label for="cloudEventsPerDay">Gemiddeld aantal keer per dag</label>
-          <input id="cloudEventsPerDay" type="number" min="1" max="5000" value="100">
-        </div>
-        <div>
-          <label>Channels waarop dit geldt</label>
-          <div id="cloudChannelSelect" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
-        </div>
-        <div>
-          <label>Dimming per channel (%)</label>
-          <div id="cloudPercentInputs" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+          <label>Per kanaal instellingen</label>
+          <div id="cloudChannelTable" style="display:grid;gap:8px;"></div>
         </div>
       </div>
       <div class="toolbar" style="margin-top:10px;">
@@ -314,10 +302,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     btnMoonlightSave:    document.getElementById("btnMoonlightSave"),
     moonlightStatus:     document.getElementById("moonlightStatus"),
     cloudEnabled:        document.getElementById("cloudEnabled"),
-    cloudAvgDurationSec: document.getElementById("cloudAvgDurationSec"),
-    cloudEventsPerDay:   document.getElementById("cloudEventsPerDay"),
-    cloudChannelSelect:  document.getElementById("cloudChannelSelect"),
-    cloudPercentInputs:  document.getElementById("cloudPercentInputs"),
+    cloudChannelTable:   document.getElementById("cloudChannelTable"),
     btnCloudSave:        document.getElementById("btnCloudSave"),
     cloudStatus:         document.getElementById("cloudStatus"),
     firmwareFile: document.getElementById("firmwareFile"),
@@ -350,7 +335,13 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
   let channelColors = [...defaultColors];
   let channelMaxWatts = [0, 0, 0, 0, 0];
-  let cloudDimPercent = [50, 50, 50, 50, 50];
+  let cloudSettings = Array.from({ length: 5 }, () => ({
+    enabled: true,
+    avgDurationSec: 30,
+    minDurationSec: 10,
+    eventsPerDay: 100,
+    dimPercent: 50
+  }));
 
   function buildColorPickers() {
     el.colorPickers.innerHTML = "";
@@ -392,55 +383,53 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   }
 
   function buildCloudEditors() {
-    el.cloudChannelSelect.innerHTML = "";
-    el.cloudPercentInputs.innerHTML = "";
-
+    el.cloudChannelTable.innerHTML = "";
     for (let i = 0; i < 5; i++) {
-      const chWrap = document.createElement("label");
-      chWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;";
-      chWrap.innerHTML = '<input type="checkbox" data-cloud-ch="' + i + '" checked style="width:auto;accent-color:var(--brand);"> Kanaal ' + (i + 1);
-      el.cloudChannelSelect.appendChild(chWrap);
-
-      const pctWrap = document.createElement("label");
-      pctWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin:0;";
-      pctWrap.textContent = "K" + (i + 1) + ":";
-      const pctInput = document.createElement("input");
-      pctInput.type = "number";
-      pctInput.min = "0";
-      pctInput.max = "100";
-      pctInput.value = String(cloudDimPercent[i]);
-      pctInput.dataset.cloudPct = i;
-      pctInput.style.cssText = "width:68px;padding:4px 6px;font-size:.9rem;";
-      pctWrap.appendChild(pctInput);
-      el.cloudPercentInputs.appendChild(pctWrap);
+      const row = document.createElement("div");
+      row.style.cssText = "display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px;align-items:end;";
+      row.innerHTML =
+        '<label style="margin:0;font-size:.84rem;">Kanaal ' + (i + 1) + '<br><input type="checkbox" data-cloud-enabled="' + i + '" style="width:auto;accent-color:var(--brand);"></label>' +
+        '<label style="margin:0;font-size:.84rem;">Dimming %<br><input type="number" min="0" max="100" data-cloud-dim="' + i + '" style="width:100%;"></label>' +
+        '<label style="margin:0;font-size:.84rem;">Gem. duur (sec)<br><input type="number" min="1" max="3600" data-cloud-avg="' + i + '" style="width:100%;"></label>' +
+        '<label style="margin:0;font-size:.84rem;">Min duur (sec)<br><input type="number" min="10" max="3600" data-cloud-min="' + i + '" style="width:100%;"></label>' +
+        '<label style="margin:0;font-size:.84rem;">Keer per dag<br><input type="number" min="1" max="5000" data-cloud-day="' + i + '" style="width:100%;"></label>';
+      el.cloudChannelTable.appendChild(row);
     }
-  }
-
-  function getCloudMaskFromUi() {
-    let mask = 0;
-    const checks = el.cloudChannelSelect.querySelectorAll("input[data-cloud-ch]");
-    checks.forEach((c) => {
-      const idx = Number(c.dataset.cloudCh);
-      if (c.checked) mask |= (1 << idx);
-    });
-    return mask;
   }
 
   function setCloudUiFromState(s) {
     el.cloudEnabled.checked = !!s.cloudSimEnabled;
-    if (typeof s.cloudAvgDurationSec === "number") el.cloudAvgDurationSec.value = String(s.cloudAvgDurationSec);
-    if (typeof s.cloudEventsPerDay === "number") el.cloudEventsPerDay.value = String(s.cloudEventsPerDay);
-    if (Array.isArray(s.cloudDimPercent) && s.cloudDimPercent.length === 5) {
-      cloudDimPercent = s.cloudDimPercent.map((v) => Math.max(0, Math.min(100, Number(v) || 0)));
-      const pctInputs = el.cloudPercentInputs.querySelectorAll("input[data-cloud-pct]");
-      pctInputs.forEach((inp, i) => { inp.value = String(cloudDimPercent[i]); });
+
+    const enabledArr = Array.isArray(s.cloudChannelEnabled) ? s.cloudChannelEnabled : null;
+    const avgArr = Array.isArray(s.cloudAvgDurationSec) ? s.cloudAvgDurationSec : null;
+    const minArr = Array.isArray(s.cloudMinDurationSec) ? s.cloudMinDurationSec : null;
+    const dayArr = Array.isArray(s.cloudEventsPerDay) ? s.cloudEventsPerDay : null;
+    const dimArr = Array.isArray(s.cloudDimPercent) ? s.cloudDimPercent : null;
+
+    for (let i = 0; i < 5; i++) {
+      cloudSettings[i] = {
+        enabled: enabledArr ? !!enabledArr[i] : true,
+        avgDurationSec: Math.max(1, Number(avgArr ? avgArr[i] : 30) || 30),
+        minDurationSec: Math.max(10, Number(minArr ? minArr[i] : 10) || 10),
+        eventsPerDay: Math.max(1, Number(dayArr ? dayArr[i] : 100) || 100),
+        dimPercent: Math.max(0, Math.min(100, Number(dimArr ? dimArr[i] : 50) || 50))
+      };
+      if (cloudSettings[i].avgDurationSec < cloudSettings[i].minDurationSec) {
+        cloudSettings[i].avgDurationSec = cloudSettings[i].minDurationSec;
+      }
     }
-    if (typeof s.cloudChannelsMask === "number") {
-      const checks = el.cloudChannelSelect.querySelectorAll("input[data-cloud-ch]");
-      checks.forEach((c) => {
-        const idx = Number(c.dataset.cloudCh);
-        c.checked = (s.cloudChannelsMask & (1 << idx)) !== 0;
-      });
+
+    const eIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-enabled]");
+    const dIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-dim]");
+    const aIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-avg]");
+    const mIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-min]");
+    const pIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-day]");
+    for (let i = 0; i < 5; i++) {
+      if (eIn[i]) eIn[i].checked = cloudSettings[i].enabled;
+      if (dIn[i]) dIn[i].value = String(cloudSettings[i].dimPercent);
+      if (aIn[i]) aIn[i].value = String(cloudSettings[i].avgDurationSec);
+      if (mIn[i]) mIn[i].value = String(cloudSettings[i].minDurationSec);
+      if (pIn[i]) pIn[i].value = String(cloudSettings[i].eventsPerDay);
     }
   }
 
@@ -487,9 +476,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       const next = typeof s.cloudNextInSec === "number"
         ? (s.cloudNextInSec <= 0 ? "nu" : (s.cloudNextInSec + " sec"))
         : "-";
-      return "wolken: " + (s.cloudActive ? "actief" : "wachten")
-        + " | gem. " + (s.cloudEventsPerDay || 100) + "x/dag"
-        + " | duur ~" + (s.cloudAvgDurationSec || 5) + " sec"
+      return "wolken: " + (s.cloudActive ? ("actief op " + (s.cloudActiveCount || 1) + " kana(a)l(en)") : "wachten")
         + " | volgende: " + next;
     })();
     el.live.textContent =
@@ -545,17 +532,29 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
 
   async function saveCloud() {
     try {
-      const pctInputs = el.cloudPercentInputs.querySelectorAll("input[data-cloud-pct]");
-      const dimPercent = Array.from(pctInputs).map((inp) => {
-        const v = Number(inp.value);
-        return Math.max(0, Math.min(100, Number.isFinite(v) ? v : 50));
-      });
+      const eIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-enabled]");
+      const dIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-dim]");
+      const aIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-avg]");
+      const mIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-min]");
+      const pIn = el.cloudChannelTable.querySelectorAll("input[data-cloud-day]");
+
+      const channels = [];
+      for (let i = 0; i < 5; i++) {
+        const minSec = Math.max(10, Number(mIn[i]?.value) || 10);
+        const avgSecRaw = Math.max(1, Number(aIn[i]?.value) || 30);
+        const avgSec = Math.max(minSec, avgSecRaw);
+        channels.push({
+          enabled: !!eIn[i]?.checked,
+          dimPercent: Math.max(0, Math.min(100, Number(dIn[i]?.value) || 50)),
+          avgDurationSec: avgSec,
+          minDurationSec: minSec,
+          eventsPerDay: Math.max(1, Number(pIn[i]?.value) || 100)
+        });
+      }
+
       const out = await Api.saveCloud({
         enabled: el.cloudEnabled.checked,
-        avgDurationSec: Number(el.cloudAvgDurationSec.value) || 5,
-        eventsPerDay: Number(el.cloudEventsPerDay.value) || 100,
-        channelsMask: getCloudMaskFromUi(),
-        dimPercent
+        channels
       });
       setStatus(el.cloudStatus, out.ok ? "Wolken simulatie opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
       await refresh();

@@ -183,6 +183,12 @@ uint16_t clampCloudDurationSec(int seconds) {
   return static_cast<uint16_t>(seconds);
 }
 
+uint16_t clampCloudMinDurationSec(int seconds) {
+  if (seconds < 10) return 10;
+  if (seconds > 3600) return 3600;
+  return static_cast<uint16_t>(seconds);
+}
+
 uint16_t clampCloudEventsPerDay(int count) {
   if (count < 1) return 1;
   if (count > 5000) return 5000;
@@ -208,89 +214,128 @@ float sampleExponential(float mean) {
   return -logf(u) * mean;
 }
 
-bool cloudHasSelectedChannels() {
-  return (cloudChannelsMask & ALL_CHANNELS_MASK) != 0;
+bool cloudChannelConfigured(uint8_t ch) {
+  if (ch >= LED_CHANNEL_COUNT) return false;
+  return cloudChannelEnabled[ch] && cloudEventsPerDay[ch] > 0;
 }
 
-void scheduleNextCloud(bool immediateBase = false) {
-  if (!cloudSimEnabled || !cloudHasSelectedChannels()) {
-    cloudNextStartMs = 0;
+void scheduleNextCloudForChannel(uint8_t ch, bool immediateBase = false) {
+  if (ch >= LED_CHANNEL_COUNT || !cloudSimEnabled || !cloudChannelConfigured(ch)) {
+    cloudRuntime[ch].nextStartMs = 0;
     return;
   }
 
-  const float meanIntervalSec = 86400.0f / static_cast<float>(cloudEventsPerDay);
+  const float meanIntervalSec = 86400.0f / static_cast<float>(cloudEventsPerDay[ch]);
   float delaySec = sampleExponential(meanIntervalSec);
   if (delaySec < 0.2f) delaySec = 0.2f;
 
   const unsigned long now = millis();
-  const unsigned long base = immediateBase ? now : (cloudActive ? cloudEndMs : now);
-  cloudNextStartMs = base + static_cast<unsigned long>(delaySec * 1000.0f);
+  const unsigned long base = immediateBase ? now : (cloudRuntime[ch].active ? cloudRuntime[ch].endMs : now);
+  cloudRuntime[ch].nextStartMs = base + static_cast<unsigned long>(delaySec * 1000.0f);
 }
 
-void stopActiveCloud() {
-  cloudActive = false;
-  cloudEndMs = 0;
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-    cloudCurrentDimPercent[ch] = 0;
-  }
+void stopCloudChannel(uint8_t ch) {
+  cloudRuntime[ch].active = false;
+  cloudRuntime[ch].startMs = 0;
+  cloudRuntime[ch].endMs = 0;
+  cloudRuntime[ch].peakDimPercent = 0;
+  cloudCurrentDimPercent[ch] = 0;
 }
 
 void resetCloudSimulationRuntime(bool keepNextSchedule = false) {
-  stopActiveCloud();
-  if (!keepNextSchedule) {
-    scheduleNextCloud(true);
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    stopCloudChannel(ch);
+    if (!keepNextSchedule) {
+      scheduleNextCloudForChannel(ch, true);
+    }
   }
+}
+
+int cloudNextInSecondsForChannel(uint8_t ch) {
+  if (!cloudSimEnabled || !cloudChannelConfigured(ch)) return -1;
+  if (cloudRuntime[ch].active) return 0;
+  const unsigned long now = millis();
+  if (cloudRuntime[ch].nextStartMs <= now) return 0;
+  return static_cast<int>((cloudRuntime[ch].nextStartMs - now) / 1000UL);
 }
 
 int cloudNextInSeconds() {
-  if (!cloudSimEnabled || !cloudHasSelectedChannels()) return -1;
-  if (cloudActive) return 0;
-  const unsigned long now = millis();
-  if (cloudNextStartMs <= now) return 0;
-  return static_cast<int>((cloudNextStartMs - now) / 1000UL);
+  if (!cloudSimEnabled) return -1;
+  int best = -1;
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    const int sec = cloudNextInSecondsForChannel(ch);
+    if (sec < 0) continue;
+    if (best < 0 || sec < best) best = sec;
+  }
+  return best;
+}
+
+uint8_t cloudActiveCount() {
+  uint8_t count = 0;
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    if (cloudRuntime[ch].active) count++;
+  }
+  return count;
 }
 
 void updateCloudSimulation() {
-  if (previewActive) {
-    if (cloudActive) stopActiveCloud();
-    return;
-  }
-
-  if (!cloudSimEnabled || !cloudHasSelectedChannels()) {
-    if (cloudActive) stopActiveCloud();
-    cloudNextStartMs = 0;
-    return;
-  }
-
   const unsigned long now = millis();
 
-  if (cloudActive) {
-    if (now >= cloudEndMs) {
-      stopActiveCloud();
-      scheduleNextCloud(false);
+  if (previewActive || !cloudSimEnabled) {
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      if (cloudRuntime[ch].active) stopCloudChannel(ch);
+      if (!cloudSimEnabled || !cloudChannelConfigured(ch)) {
+        cloudRuntime[ch].nextStartMs = 0;
+      }
     }
     return;
   }
 
-  if (cloudNextStartMs == 0) {
-    scheduleNextCloud(true);
-    return;
-  }
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    if (!cloudChannelConfigured(ch)) {
+      if (cloudRuntime[ch].active) stopCloudChannel(ch);
+      cloudRuntime[ch].nextStartMs = 0;
+      continue;
+    }
 
-  if (now < cloudNextStartMs) return;
+    if (cloudRuntime[ch].active) {
+      if (now >= cloudRuntime[ch].endMs) {
+        stopCloudChannel(ch);
+        scheduleNextCloudForChannel(ch, false);
+      }
+      continue;
+    }
+
+    if (cloudRuntime[ch].nextStartMs == 0) {
+      scheduleNextCloudForChannel(ch, true);
+      continue;
+    }
+
+    if (now < cloudRuntime[ch].nextStartMs) continue;
+
+    const float jitter = 0.8f + random01() * 0.4f;
+    cloudRuntime[ch].peakDimPercent = clampCloudPercent(static_cast<int>(roundf(cloudDimPercent[ch] * jitter)));
+
+    float durationSec = sampleExponential(static_cast<float>(cloudAvgDurationSec[ch]));
+    if (durationSec < cloudMinDurationSec[ch]) {
+      durationSec = static_cast<float>(cloudMinDurationSec[ch]);
+    }
+
+    cloudRuntime[ch].active = true;
+    cloudRuntime[ch].startMs = now;
+    cloudRuntime[ch].endMs = now + static_cast<unsigned long>(durationSec * 1000.0f);
+  }
 
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
     cloudCurrentDimPercent[ch] = 0;
-    if ((cloudChannelsMask & (1u << ch)) == 0) continue;
-    const float jitter = 0.8f + random01() * 0.4f;  // ongeveer de ingestelde waarde
-    cloudCurrentDimPercent[ch] = clampCloudPercent(static_cast<int>(roundf(cloudDimPercent[ch] * jitter)));
+    if (!cloudRuntime[ch].active) continue;
+    const unsigned long start = cloudRuntime[ch].startMs;
+    const unsigned long end = cloudRuntime[ch].endMs;
+    if (end <= start) continue;
+    const float t = (now <= start) ? 0.0f : (now >= end) ? 1.0f : (static_cast<float>(now - start) / static_cast<float>(end - start));
+    const float triangle = (t <= 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
+    cloudCurrentDimPercent[ch] = clampCloudPercent(static_cast<int>(roundf(cloudRuntime[ch].peakDimPercent * triangle)));
   }
-
-  float durationSec = sampleExponential(static_cast<float>(cloudAvgDurationSec));
-  if (durationSec < 0.3f) durationSec = 0.3f;
-
-  cloudActive = true;
-  cloudEndMs = now + static_cast<unsigned long>(durationSec * 1000.0f);
 }
 
 bool isPlaceholderSsid(const String &ssid) {
@@ -414,13 +459,18 @@ bool saveSchedulerData() {
   doc["moonlightChannel"]   = moonlightChannel;
   doc["moonlightIntensity"] = moonlightIntensity;
   doc["masterBrightness"]   = masterBrightness;
-  doc["cloudSimEnabled"]    = cloudSimEnabled;
-  doc["cloudChannelsMask"]  = cloudChannelsMask;
-  doc["cloudAvgDurationSec"] = cloudAvgDurationSec;
-  doc["cloudEventsPerDay"]   = cloudEventsPerDay;
+  doc["cloudSimEnabled"] = cloudSimEnabled;
 
+  JsonArray jCloudEnabled = doc.createNestedArray("cloudChannelEnabled");
+  JsonArray jCloudAvgSec = doc.createNestedArray("cloudAvgDurationSec");
+  JsonArray jCloudMinSec = doc.createNestedArray("cloudMinDurationSec");
+  JsonArray jCloudPerDay = doc.createNestedArray("cloudEventsPerDay");
   JsonArray jCloudPct = doc.createNestedArray("cloudDimPercent");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    jCloudEnabled.add(cloudChannelEnabled[ch]);
+    jCloudAvgSec.add(cloudAvgDurationSec[ch]);
+    jCloudMinSec.add(cloudMinDurationSec[ch]);
+    jCloudPerDay.add(cloudEventsPerDay[ch]);
     jCloudPct.add(cloudDimPercent[ch]);
   }
 
@@ -503,12 +553,35 @@ bool loadSchedulerData() {
     float b = doc["masterBrightness"] | 1.0f;
     masterBrightness = (b < 0.0f) ? 0.0f : (b > 2.0f) ? 2.0f : b;
   }
-  cloudSimEnabled    = doc["cloudSimEnabled"] | false;
-  cloudChannelsMask  = static_cast<uint8_t>(doc["cloudChannelsMask"] | ALL_CHANNELS_MASK) & ALL_CHANNELS_MASK;
-  cloudAvgDurationSec = clampCloudDurationSec(doc["cloudAvgDurationSec"] | 5);
-  cloudEventsPerDay   = clampCloudEventsPerDay(doc["cloudEventsPerDay"] | 100);
+  cloudSimEnabled = doc["cloudSimEnabled"] | false;
+
+  JsonArray jCloudEnabled = doc["cloudChannelEnabled"].as<JsonArray>();
+  JsonArray jCloudAvgSec = doc["cloudAvgDurationSec"].as<JsonArray>();
+  JsonArray jCloudMinSec = doc["cloudMinDurationSec"].as<JsonArray>();
+  JsonArray jCloudPerDay = doc["cloudEventsPerDay"].as<JsonArray>();
   JsonArray jCloudPct = doc["cloudDimPercent"].as<JsonArray>();
+
+  // Migratie van oude cloud instellingen (globaal + channelsMask) naar per-kanaal
+  const uint8_t legacyMask = static_cast<uint8_t>(doc["cloudChannelsMask"] | ALL_CHANNELS_MASK) & ALL_CHANNELS_MASK;
+  const uint16_t legacyAvgSec = clampCloudDurationSec(doc["cloudAvgDurationSec"].is<JsonArray>() ? 30 : (doc["cloudAvgDurationSec"] | 30));
+  const uint16_t legacyPerDay = clampCloudEventsPerDay(doc["cloudEventsPerDay"].is<JsonArray>() ? 100 : (doc["cloudEventsPerDay"] | 100));
+
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    cloudChannelEnabled[ch] = (!jCloudEnabled.isNull() && ch < jCloudEnabled.size())
+                                  ? static_cast<bool>(jCloudEnabled[ch] | true)
+                                  : ((legacyMask & (1u << ch)) != 0);
+    cloudAvgDurationSec[ch] = (!jCloudAvgSec.isNull() && ch < jCloudAvgSec.size())
+                                  ? clampCloudDurationSec(jCloudAvgSec[ch] | 30)
+                                  : legacyAvgSec;
+    cloudMinDurationSec[ch] = (!jCloudMinSec.isNull() && ch < jCloudMinSec.size())
+                                  ? clampCloudMinDurationSec(jCloudMinSec[ch] | 10)
+                                  : 10;
+    if (cloudAvgDurationSec[ch] < cloudMinDurationSec[ch]) {
+      cloudAvgDurationSec[ch] = cloudMinDurationSec[ch];
+    }
+    cloudEventsPerDay[ch] = (!jCloudPerDay.isNull() && ch < jCloudPerDay.size())
+                                ? clampCloudEventsPerDay(jCloudPerDay[ch] | 100)
+                                : legacyPerDay;
     cloudDimPercent[ch] = (!jCloudPct.isNull() && ch < jCloudPct.size())
                               ? clampCloudPercent(jCloudPct[ch] | 50)
                               : 50;
@@ -1128,8 +1201,8 @@ void updateOutputs() {
     }
     // Helderheidsscaling: schaal target met masterBrightness, limiteer op 4095
     target = fminf(target * masterBrightness, 4095.0f);
-    // Wolken simulatie: dim geselecteerde kanalen met (ongeveer) ingestelde percentages.
-    if (cloudActive && (cloudChannelsMask & (1u << ch))) {
+    // Wolken simulatie: per kanaal driehoek-profiel (fade down + fade up over volledige wolkduur)
+    if (cloudCurrentDimPercent[ch] > 0) {
       target *= (100.0f - cloudCurrentDimPercent[ch]) / 100.0f;
     }
     // Altijd faden in perceptuele ruimte — behalve bij directe preview (slider slepen)
@@ -1201,19 +1274,37 @@ String stateJson() {
   doc["moonPhase"]               = calcMoonPhase();
   doc["moonlightActive"]         = moonlightCurrentlyActive;
   doc["masterBrightness"]        = masterBrightness;
-  doc["cloudSimEnabled"]         = cloudSimEnabled;
-  doc["cloudActive"]             = cloudActive;
-  doc["cloudChannelsMask"]       = cloudChannelsMask;
-  doc["cloudAvgDurationSec"]     = cloudAvgDurationSec;
-  doc["cloudEventsPerDay"]       = cloudEventsPerDay;
-  doc["cloudNextInSec"]          = cloudNextInSeconds();
+  doc["cloudSimEnabled"] = cloudSimEnabled;
+  doc["cloudActive"] = cloudActiveCount() > 0;
+  doc["cloudActiveCount"] = cloudActiveCount();
+  doc["cloudNextInSec"] = cloudNextInSeconds();
 
+  uint32_t sumEvents = 0;
+  uint32_t sumAvgSec = 0;
+  uint8_t enabledCount = 0;
+  JsonArray jCloudEnabled = doc.createNestedArray("cloudChannelEnabled");
+  JsonArray jCloudAvgSec = doc.createNestedArray("cloudAvgDurationSec");
+  JsonArray jCloudMinSec = doc.createNestedArray("cloudMinDurationSec");
+  JsonArray jCloudPerDay = doc.createNestedArray("cloudEventsPerDay");
   JsonArray jCloudPct = doc.createNestedArray("cloudDimPercent");
   JsonArray jCloudCurrentPct = doc.createNestedArray("cloudCurrentDimPercent");
+  JsonArray jCloudNextSec = doc.createNestedArray("cloudNextInSecPerChannel");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    jCloudEnabled.add(cloudChannelEnabled[ch]);
+    jCloudAvgSec.add(cloudAvgDurationSec[ch]);
+    jCloudMinSec.add(cloudMinDurationSec[ch]);
+    jCloudPerDay.add(cloudEventsPerDay[ch]);
     jCloudPct.add(cloudDimPercent[ch]);
     jCloudCurrentPct.add(cloudCurrentDimPercent[ch]);
+    jCloudNextSec.add(cloudNextInSecondsForChannel(ch));
+    if (cloudChannelEnabled[ch]) {
+      enabledCount++;
+      sumEvents += cloudEventsPerDay[ch];
+      sumAvgSec += cloudAvgDurationSec[ch];
+    }
   }
+  doc["cloudEventsPerDay"] = enabledCount > 0 ? (sumEvents / enabledCount) : 0;
+  doc["cloudAvgDurationSec"] = enabledCount > 0 ? (sumAvgSec / enabledCount) : 0;
 
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
@@ -1268,10 +1359,20 @@ void handleGetStateLight() {
   doc["masterEnabled"] = masterEnabled;
   doc["masterBrightness"] = masterBrightness;
   doc["cloudSimEnabled"] = cloudSimEnabled;
-  doc["cloudActive"] = cloudActive;
+  doc["cloudActive"] = cloudActiveCount() > 0;
+  doc["cloudActiveCount"] = cloudActiveCount();
   doc["cloudNextInSec"] = cloudNextInSeconds();
-  doc["cloudEventsPerDay"] = cloudEventsPerDay;
-  doc["cloudAvgDurationSec"] = cloudAvgDurationSec;
+  uint32_t sumEvents = 0;
+  uint32_t sumAvgSec = 0;
+  uint8_t enabledCount = 0;
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    if (!cloudChannelEnabled[ch]) continue;
+    enabledCount++;
+    sumEvents += cloudEventsPerDay[ch];
+    sumAvgSec += cloudAvgDurationSec[ch];
+  }
+  doc["cloudEventsPerDay"] = enabledCount > 0 ? (sumEvents / enabledCount) : 0;
+  doc["cloudAvgDurationSec"] = enabledCount > 0 ? (sumAvgSec / enabledCount) : 0;
   JsonArray outL = doc.createNestedArray("outputs");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outL.add(currentOutputs[ch]);
   JsonArray jWattsL = doc.createNestedArray("channelMaxWatts");
@@ -1640,12 +1741,19 @@ void handleScheduleExport() {
   DynamicJsonDocument doc(28672);
   doc["activePreset"]         = gData.activePreset;
   doc["simulationDaySeconds"] = simulationDaySeconds;
-  doc["cloudSimEnabled"]      = cloudSimEnabled;
-  doc["cloudChannelsMask"]    = cloudChannelsMask;
-  doc["cloudAvgDurationSec"]  = cloudAvgDurationSec;
-  doc["cloudEventsPerDay"]    = cloudEventsPerDay;
+  doc["cloudSimEnabled"] = cloudSimEnabled;
+  JsonArray jCloudEnabled = doc.createNestedArray("cloudChannelEnabled");
+  JsonArray jCloudAvgSec = doc.createNestedArray("cloudAvgDurationSec");
+  JsonArray jCloudMinSec = doc.createNestedArray("cloudMinDurationSec");
+  JsonArray jCloudPerDay = doc.createNestedArray("cloudEventsPerDay");
   JsonArray jCloudPct = doc.createNestedArray("cloudDimPercent");
-  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) jCloudPct.add(cloudDimPercent[ch]);
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    jCloudEnabled.add(cloudChannelEnabled[ch]);
+    jCloudAvgSec.add(cloudAvgDurationSec[ch]);
+    jCloudMinSec.add(cloudMinDurationSec[ch]);
+    jCloudPerDay.add(cloudEventsPerDay[ch]);
+    jCloudPct.add(cloudDimPercent[ch]);
+  }
   JsonArray jColors = doc.createNestedArray("channelColors");
   for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
     jColors.add(gData.channelColors[ch]);
@@ -1709,16 +1817,46 @@ void handleScheduleImport() {
     simulationDaySeconds = clampSimulationSeconds(body["simulationDaySeconds"]);
   if (!body["cloudSimEnabled"].isNull())
     cloudSimEnabled = body["cloudSimEnabled"] | cloudSimEnabled;
-  if (!body["cloudChannelsMask"].isNull())
-    cloudChannelsMask = static_cast<uint8_t>(body["cloudChannelsMask"].as<int>()) & ALL_CHANNELS_MASK;
-  if (!body["cloudAvgDurationSec"].isNull())
-    cloudAvgDurationSec = clampCloudDurationSec(body["cloudAvgDurationSec"]);
-  if (!body["cloudEventsPerDay"].isNull())
-    cloudEventsPerDay = clampCloudEventsPerDay(body["cloudEventsPerDay"]);
+
+  JsonArrayConst jCloudEnabled = body["cloudChannelEnabled"].as<JsonArrayConst>();
+  JsonArrayConst jCloudAvgSec = body["cloudAvgDurationSec"].as<JsonArrayConst>();
+  JsonArrayConst jCloudMinSec = body["cloudMinDurationSec"].as<JsonArrayConst>();
+  JsonArrayConst jCloudPerDay = body["cloudEventsPerDay"].as<JsonArrayConst>();
   JsonArrayConst jCloudPct = body["cloudDimPercent"].as<JsonArrayConst>();
-  if (!jCloudPct.isNull() && jCloudPct.size() == LED_CHANNEL_COUNT) {
-    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+
+  const uint8_t legacyMask = static_cast<uint8_t>(body["cloudChannelsMask"] | ALL_CHANNELS_MASK) & ALL_CHANNELS_MASK;
+  const uint16_t legacyAvgSec = clampCloudDurationSec(body["cloudAvgDurationSec"].is<JsonArray>() ? 30 : (body["cloudAvgDurationSec"] | 30));
+  const uint16_t legacyPerDay = clampCloudEventsPerDay(body["cloudEventsPerDay"].is<JsonArray>() ? 100 : (body["cloudEventsPerDay"] | 100));
+
+  for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+    if (!jCloudEnabled.isNull() && ch < jCloudEnabled.size()) {
+      cloudChannelEnabled[ch] = jCloudEnabled[ch] | cloudChannelEnabled[ch];
+    } else if (!body["cloudChannelsMask"].isNull()) {
+      cloudChannelEnabled[ch] = (legacyMask & (1u << ch)) != 0;
+    }
+
+    if (!jCloudAvgSec.isNull() && ch < jCloudAvgSec.size()) {
+      cloudAvgDurationSec[ch] = clampCloudDurationSec(jCloudAvgSec[ch] | cloudAvgDurationSec[ch]);
+    } else if (!body["cloudAvgDurationSec"].isNull() && !body["cloudAvgDurationSec"].is<JsonArray>()) {
+      cloudAvgDurationSec[ch] = legacyAvgSec;
+    }
+
+    if (!jCloudMinSec.isNull() && ch < jCloudMinSec.size()) {
+      cloudMinDurationSec[ch] = clampCloudMinDurationSec(jCloudMinSec[ch] | cloudMinDurationSec[ch]);
+    }
+
+    if (!jCloudPerDay.isNull() && ch < jCloudPerDay.size()) {
+      cloudEventsPerDay[ch] = clampCloudEventsPerDay(jCloudPerDay[ch] | cloudEventsPerDay[ch]);
+    } else if (!body["cloudEventsPerDay"].isNull() && !body["cloudEventsPerDay"].is<JsonArray>()) {
+      cloudEventsPerDay[ch] = legacyPerDay;
+    }
+
+    if (!jCloudPct.isNull() && ch < jCloudPct.size()) {
       cloudDimPercent[ch] = clampCloudPercent(jCloudPct[ch] | cloudDimPercent[ch]);
+    }
+
+    if (cloudAvgDurationSec[ch] < cloudMinDurationSec[ch]) {
+      cloudAvgDurationSec[ch] = cloudMinDurationSec[ch];
     }
   }
   resetCloudSimulationRuntime(false);
@@ -1770,7 +1908,7 @@ void handleMoonlightSave() {
 }
 
 void handleCloudSave() {
-  DynamicJsonDocument body(1024);
+  DynamicJsonDocument body(2048);
   if (deserializeJson(body, server.arg("plain"))) {
     DynamicJsonDocument resp(256);
     resp["ok"] = false;
@@ -1782,22 +1920,45 @@ void handleCloudSave() {
     cloudSimEnabled = body["enabled"] | false;
   }
 
-  if (!body["avgDurationSec"].isNull()) {
-    cloudAvgDurationSec = clampCloudDurationSec(body["avgDurationSec"] | cloudAvgDurationSec);
-  }
-
-  if (!body["eventsPerDay"].isNull()) {
-    cloudEventsPerDay = clampCloudEventsPerDay(body["eventsPerDay"] | cloudEventsPerDay);
-  }
-
-  if (!body["channelsMask"].isNull()) {
-    cloudChannelsMask = static_cast<uint8_t>(body["channelsMask"].as<int>()) & ALL_CHANNELS_MASK;
-  }
-
-  JsonArray dimPct = body["dimPercent"].as<JsonArray>();
-  if (!dimPct.isNull() && dimPct.size() == LED_CHANNEL_COUNT) {
+  // Nieuw formaat: per kanaal objecten
+  JsonArray channels = body["channels"].as<JsonArray>();
+  if (!channels.isNull() && channels.size() == LED_CHANNEL_COUNT) {
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
-      cloudDimPercent[ch] = clampCloudPercent(dimPct[ch] | cloudDimPercent[ch]);
+      JsonObject cfg = channels[ch].as<JsonObject>();
+      cloudChannelEnabled[ch] = cfg["enabled"].isNull() ? cloudChannelEnabled[ch] : (cfg["enabled"] | cloudChannelEnabled[ch]);
+      cloudAvgDurationSec[ch] = cfg["avgDurationSec"].isNull() ? cloudAvgDurationSec[ch] : clampCloudDurationSec(cfg["avgDurationSec"] | cloudAvgDurationSec[ch]);
+      cloudMinDurationSec[ch] = cfg["minDurationSec"].isNull() ? cloudMinDurationSec[ch] : clampCloudMinDurationSec(cfg["minDurationSec"] | cloudMinDurationSec[ch]);
+      cloudEventsPerDay[ch] = cfg["eventsPerDay"].isNull() ? cloudEventsPerDay[ch] : clampCloudEventsPerDay(cfg["eventsPerDay"] | cloudEventsPerDay[ch]);
+      cloudDimPercent[ch] = cfg["dimPercent"].isNull() ? cloudDimPercent[ch] : clampCloudPercent(cfg["dimPercent"] | cloudDimPercent[ch]);
+      if (cloudAvgDurationSec[ch] < cloudMinDurationSec[ch]) {
+        cloudAvgDurationSec[ch] = cloudMinDurationSec[ch];
+      }
+    }
+  } else {
+    // Backward compatibility met oude payload
+    if (!body["avgDurationSec"].isNull()) {
+      const uint16_t avgSec = clampCloudDurationSec(body["avgDurationSec"] | 30);
+      for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) cloudAvgDurationSec[ch] = avgSec;
+    }
+    if (!body["eventsPerDay"].isNull()) {
+      const uint16_t perDay = clampCloudEventsPerDay(body["eventsPerDay"] | 100);
+      for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) cloudEventsPerDay[ch] = perDay;
+    }
+    if (!body["channelsMask"].isNull()) {
+      const uint8_t mask = static_cast<uint8_t>(body["channelsMask"].as<int>()) & ALL_CHANNELS_MASK;
+      for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) cloudChannelEnabled[ch] = (mask & (1u << ch)) != 0;
+    }
+    JsonArray dimPct = body["dimPercent"].as<JsonArray>();
+    if (!dimPct.isNull() && dimPct.size() == LED_CHANNEL_COUNT) {
+      for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+        cloudDimPercent[ch] = clampCloudPercent(dimPct[ch] | cloudDimPercent[ch]);
+      }
+    }
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+      cloudMinDurationSec[ch] = clampCloudMinDurationSec(cloudMinDurationSec[ch]);
+      if (cloudAvgDurationSec[ch] < cloudMinDurationSec[ch]) {
+        cloudAvgDurationSec[ch] = cloudMinDurationSec[ch];
+      }
     }
   }
 
@@ -1807,10 +1968,8 @@ void handleCloudSave() {
   DynamicJsonDocument resp(512);
   resp["ok"] = true;
   resp["cloudSimEnabled"] = cloudSimEnabled;
-  resp["cloudChannelsMask"] = cloudChannelsMask;
-  resp["cloudAvgDurationSec"] = cloudAvgDurationSec;
-  resp["cloudEventsPerDay"] = cloudEventsPerDay;
   resp["cloudNextInSec"] = cloudNextInSeconds();
+  resp["cloudActiveCount"] = cloudActiveCount();
   sendJson(200, resp);
 }
 
