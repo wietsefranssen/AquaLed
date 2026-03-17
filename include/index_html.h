@@ -173,6 +173,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   const smoothStep = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
   const toPct = (v) => Math.round(v / 4095 * 100);
   const fmtMin = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
+  const fmtClock = (d) => String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0");
 
   async function api(path, method = "GET", body = null) {
     const init = { method, headers: {} };
@@ -424,6 +425,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     const dailyRow = dailyWh !== null
       ? '<div class="live-row" style="margin-top:4px;"><span class="live-label">Dagverbruik</span><span class="live-value">~' + (dailyWh >= 1000 ? (dailyWh / 1000).toFixed(2) + ' kWh' : dailyWh.toFixed(0) + ' Wh') + '</span></div>'
       : '';
+    const cloudEtaText = (() => {
+      if (!state.cloudSimEnabled) return "";
+      if (state.cloudActive) return "nu actief";
+      const sec = Number(state.cloudNextInSec);
+      if (!Number.isFinite(sec) || sec <= 0) return "binnenkort";
+      const around = new Date(Date.now() + sec * 1000);
+      return "over " + sec + " sec (rond " + fmtClock(around) + ")";
+    })();
 
     el.live.innerHTML =
       '<div class="live-row">' + badges + '</div>'
@@ -432,7 +441,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       + '<div class="live-row"><span class="live-label">Datum</span><span class="live-value">' + (state.dateTime || "-") + '</span></div>'
         + (state.cloudSimEnabled
           ? '<div class="live-row"><span class="live-label">Volgende wolk</span><span class="live-value">'
-            + (state.cloudActive ? 'nu actief' : (state.cloudNextInSec <= 0 ? 'binnenkort' : ('over ' + state.cloudNextInSec + ' sec')))
+            + cloudEtaText
             + ' (gem. ' + state.cloudEventsPerDay + 'x/dag, ~' + state.cloudAvgDurationSec + ' sec)</span></div>'
           : '')
       + (state.moonlightEnabled && state.moonlightChannel >= 0 ? '<div class="live-row"><span class="live-label">Maanlicht</span><span class="live-value">'

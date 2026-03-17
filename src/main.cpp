@@ -106,16 +106,24 @@ uint16_t moonlightIntensity = 492; // 0-4095 (~12% standaard)
 bool moonlightCurrentlyActive = false;
 float masterBrightness = 1.0f;  // 0.0–2.0 (0–200%), schaalsfactor over alle kanalen
 
-// Wolken simulatie
+// Wolken simulatie (per kanaal)
 bool cloudSimEnabled = false;
-uint8_t cloudChannelsMask = ALL_CHANNELS_MASK;
-uint16_t cloudAvgDurationSec = 5;
-uint16_t cloudEventsPerDay = 100;
+bool cloudChannelEnabled[LED_CHANNEL_COUNT] = {true, true, true, true, true};
+uint16_t cloudAvgDurationSec[LED_CHANNEL_COUNT] = {30, 30, 30, 30, 30};
+uint16_t cloudMinDurationSec[LED_CHANNEL_COUNT] = {10, 10, 10, 10, 10};
+uint16_t cloudEventsPerDay[LED_CHANNEL_COUNT] = {100, 100, 100, 100, 100};
 uint8_t cloudDimPercent[LED_CHANNEL_COUNT] = {50, 50, 50, 50, 50};
 uint8_t cloudCurrentDimPercent[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};
-bool cloudActive = false;
-unsigned long cloudEndMs = 0;
-unsigned long cloudNextStartMs = 0;
+
+struct CloudRuntime {
+  bool active = false;
+  unsigned long startMs = 0;
+  unsigned long endMs = 0;
+  unsigned long nextStartMs = 0;
+  uint8_t peakDimPercent = 0;
+};
+
+CloudRuntime cloudRuntime[LED_CHANNEL_COUNT];
 
 WiFiClient     mqttWifiClient;
 PubSubClient   mqttClient(mqttWifiClient);
