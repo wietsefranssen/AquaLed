@@ -997,6 +997,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         state.previewMinute = null;
         stopSimLoop();
         await setSimulation(true);
+        resetAutoResumeTimer();
         setStatus("Versnelde simulatie gestart", false);
       } catch (e) {
         setStatus("Simulatie mislukt: " + e.message, true);
@@ -1070,6 +1071,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       }
       localPreviewOutputs(state.previewMinute);
       render();
+      resetAutoResumeTimer();
     });
 
     el.previewSlider.addEventListener("change", async () => {
@@ -1077,6 +1079,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const r = await api("/api/preview/set", "POST", { enabled: true, minute: state.previewMinute });
         if (r.outputs) { state.outputs = r.outputs; render(); }
       } catch (_) {}
+      resetAutoResumeTimer();
     });
 
     el.btnPreviewReset.onclick = async () => {
@@ -1084,6 +1087,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         if (state.simulationActive) await setSimulation(false);
         if (state.previewMinute !== null) await api("/api/preview/set", "POST", { enabled: false });
       } catch (_) {}
+      if (autoResumeTimeoutId) clearTimeout(autoResumeTimeoutId);
+      autoResumeTimeoutId = null;
       state.previewMinute = null;
       state.simulationActive = false;
       stopSimLoop();
@@ -1132,6 +1137,25 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     let pollId = null;
     let simAnchor = null;
     let simRafId = null;
+    let autoResumeTimeoutId = null;
+
+    function resetAutoResumeTimer() {
+      if (autoResumeTimeoutId) clearTimeout(autoResumeTimeoutId);
+      const isInPreviewOrSim = state.previewMinute !== null || state.simulationActive;
+      if (!isInPreviewOrSim) return;
+      autoResumeTimeoutId = setTimeout(async () => {
+        try {
+          if (state.simulationActive) await setSimulation(false);
+          if (state.previewMinute !== null) await api("/api/preview/set", "POST", { enabled: false });
+        } catch (_) {}
+        state.previewMinute = null;
+        state.simulationActive = false;
+        stopSimLoop();
+        render();
+        startPoll();
+        setStatus("Live weergave automatisch hervat na 5 minuten inactiviteit", false);
+      }, 5 * 60 * 1000);
+    }
 
     function localSimOutputs(minute) {
       const preset = state.working || state.presets[state.activePreset];

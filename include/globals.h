@@ -142,6 +142,7 @@ extern uint16_t      manualTimeBaseMinute;
 extern unsigned long manualTimeSetMs;
 extern uint16_t      simulationStartMinute;
 extern unsigned long simulationStartMs;
+extern unsigned long previewStartMs;
 extern uint16_t      simulationDaySeconds;
 
 extern uint16_t currentOutputs[LED_CHANNEL_COUNT];

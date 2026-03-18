@@ -25,6 +25,7 @@ uint16_t      manualTimeBaseMinute  = 0;
 unsigned long manualTimeSetMs       = 0;
 uint16_t      simulationStartMinute = 0;
 unsigned long simulationStartMs     = 0;
+unsigned long previewStartMs        = 0;
 uint16_t      simulationDaySeconds  = 120;
 
 uint16_t currentOutputs[LED_CHANNEL_COUNT] = {0, 0, 0, 0, 0};

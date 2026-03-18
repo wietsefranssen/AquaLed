@@ -417,9 +417,17 @@ void handleSimulationSet() {
     bool enabled    = body["enabled"]    | false;
     int  daySeconds = body["daySeconds"] | simulationDaySeconds;
 
-    if (enabled) previewActive = false;
+    if (enabled) {
+        previewActive = false;
+        previewStartMs = 0;
+    }
 
     setSimulation(enabled, daySeconds);
+    if (enabled) {
+        simulationStartMs = millis();
+    } else {
+        simulationStartMs = 0;
+    }
 
     DynamicJsonDocument resp(256);
     resp["ok"]                  = true;
@@ -439,9 +447,13 @@ void handlePreviewSet() {
 
     bool enabled = body["enabled"] | false;
     if (enabled) {
-        if (simulationActive) setSimulation(false, simulationDaySeconds);
+        if (simulationActive) {
+            setSimulation(false, simulationDaySeconds);
+            simulationStartMs = 0;
+        }
         previewMinute = clampMinute(body["minute"] | 0);
         previewActive = true;
+        previewStartMs = millis();
 
         JsonArray directOutputs = body["outputs"].as<JsonArray>();
         if (!directOutputs.isNull() && directOutputs.size() == LED_CHANNEL_COUNT) {
@@ -459,6 +471,7 @@ void handlePreviewSet() {
     } else {
         previewActive = false;
         previewDirect = false;
+        previewStartMs = 0;
         Serial.println("[PREVIEW] Uit");
         updateOutputs();
     }

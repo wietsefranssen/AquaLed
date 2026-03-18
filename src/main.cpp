@@ -178,6 +178,31 @@ void setup() {
   resetCloudSimulationRuntime(false);
 }
 
+static void checkAndResetPreviewSimulationTimeout() {
+  constexpr unsigned long TIMEOUT_MS = 5 * 60 * 1000; // 5 minuten
+  const unsigned long now = millis();
+
+  // Check simulatie timeout
+  if (simulationActive && simulationStartMs > 0) {
+    if (now - simulationStartMs >= TIMEOUT_MS) {
+      Serial.println("[TIMEOUT] Simulatie na 5 minuten automatisch uitgeschakeld");
+      setSimulation(false, simulationDaySeconds);
+      simulationStartMs = 0;
+    }
+  }
+
+  // Check preview timeout
+  if (previewActive && previewStartMs > 0) {
+    if (now - previewStartMs >= TIMEOUT_MS) {
+      Serial.println("[TIMEOUT] Preview na 5 minuten automatisch uitgeschakeld");
+      previewActive = false;
+      previewDirect = false;
+      previewStartMs = 0;
+      updateOutputs();
+    }
+  }
+}
+
 void loop() {
   otaLoop();
 
@@ -205,6 +230,7 @@ void loop() {
   ensureWifiLink();
   handleSerialCli();
   handleButton();
+  checkAndResetPreviewSimulationTimeout();
 
   const unsigned long now = millis();
   updateCloudSimulation();
