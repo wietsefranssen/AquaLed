@@ -500,6 +500,9 @@ void handleScheduleExport() {
     JsonArray jColors = doc.createNestedArray("channelColors");
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
         jColors.add(gData.channelColors[ch]);
+    JsonArray jWatts = doc.createNestedArray("channelMaxWatts");
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch)
+        jWatts.add(gData.channelMaxWatts[ch]);
     JsonArray presets = doc.createNestedArray("presets");
     for (uint8_t p = 0; p < gData.presetCount; ++p) {
         JsonObject jp      = presets.createNestedObject();
@@ -545,6 +548,15 @@ void handleScheduleImport() {
             newData.channelColors[ch] = String((const char *)(jColors[ch] | ""));
         else
             newData.channelColors[ch] = gData.channelColors[ch];
+    }
+    JsonArrayConst jWatts = body["channelMaxWatts"].as<JsonArrayConst>();
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) {
+        if (!jWatts.isNull() && ch < jWatts.size()) {
+            float w = jWatts[ch] | 0.0f;
+            newData.channelMaxWatts[ch] = w < 0.0f ? 0.0f : w;
+        } else {
+            newData.channelMaxWatts[ch] = gData.channelMaxWatts[ch];
+        }
     }
 
     bool ok = true;

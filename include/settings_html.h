@@ -335,6 +335,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   const defaultColors = ["#1f7a8c", "#2d936c", "#8f6c4e", "#ba5a31", "#7b4fa3"];
   let channelColors = [...defaultColors];
   let channelMaxWatts = [0, 0, 0, 0, 0];
+  let wattsDirty = false;
   const CLOUD_DEFAULT_AVG_DURATION_SEC = 30;
   const CLOUD_DEFAULT_MIN_DURATION_SEC = 10;
   const CLOUD_DEFAULT_EVENTS_PER_DAY = 100;
@@ -373,6 +374,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       wattInput.value = channelMaxWatts[i];
       wattInput.dataset.wch = i;
       wattInput.style.cssText = "width:70px;padding:4px 6px;font-size:.9rem;";
+      wattInput.addEventListener("input", () => { wattsDirty = true; });
       wattLabel.appendChild(wattInput);
 
       wrap.appendChild(colorLabel);
@@ -460,7 +462,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       const inputs = el.colorPickers.querySelectorAll("input[type=color]");
       inputs.forEach((inp, i) => { inp.value = channelColors[i]; });
     }
-    if (Array.isArray(s.channelMaxWatts) && s.channelMaxWatts.length === 5) {
+    if (!wattsDirty && Array.isArray(s.channelMaxWatts) && s.channelMaxWatts.length === 5) {
       channelMaxWatts = [...s.channelMaxWatts];
       const wInputs = el.colorPickers.querySelectorAll("input[type=number]");
       wInputs.forEach((inp, i) => { inp.value = channelMaxWatts[i]; });
@@ -628,6 +630,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       await Api.saveColors({ channelColors: colors, channelMaxWatts: watts });
       channelColors = [...colors];
       channelMaxWatts = [...watts];
+      wattsDirty = false;
       colorsLoaded = false;
       setStatus(el.colorStatus, "Kleuren en wattages opgeslagen", "ok");
     } catch (e) {
