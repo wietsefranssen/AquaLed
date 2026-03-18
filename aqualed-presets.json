@@ -1,0 +1,953 @@
+{
+  "activePreset": 0,
+  "simulationDaySeconds": 10,
+  "cloudSimEnabled": true,
+  "cloudChannelEnabled": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "cloudAvgDurationSec": [
+    8,
+    8,
+    8,
+    8,
+    8
+  ],
+  "cloudMinDurationSec": [
+    5,
+    5,
+    5,
+    5,
+    5
+  ],
+  "cloudEventsPerDay": [
+    3020,
+    3000,
+    5000,
+    3000,
+    3000
+  ],
+  "cloudDimPercent": [
+    100,
+    100,
+    60,
+    60,
+    60
+  ],
+  "channelColors": [
+    "#ff2600",
+    "#0433ff",
+    "#ffe4a8",
+    "#ffaa00",
+    "#ffaa00"
+  ],
+  "presets": [
+    {
+      "name": "Lente",
+      "channels": [
+        [
+          {
+            "minute": 313,
+            "value": 10
+          },
+          {
+            "minute": 551,
+            "value": 2566
+          },
+          {
+            "minute": 717,
+            "value": 2870
+          },
+          {
+            "minute": 936,
+            "value": 2777
+          },
+          {
+            "minute": 1140,
+            "value": 1205
+          },
+          {
+            "minute": 1362,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 272,
+            "value": 0
+          },
+          {
+            "minute": 560,
+            "value": 2652
+          },
+          {
+            "minute": 876,
+            "value": 3236
+          },
+          {
+            "minute": 1210,
+            "value": 1609
+          },
+          {
+            "minute": 1375,
+            "value": 1
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 299,
+            "value": 152
+          },
+          {
+            "minute": 482,
+            "value": 2298
+          },
+          {
+            "minute": 634,
+            "value": 3655
+          },
+          {
+            "minute": 895,
+            "value": 3013
+          },
+          {
+            "minute": 1198,
+            "value": 2048
+          },
+          {
+            "minute": 1326,
+            "value": 31
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 128,
+            "value": 0
+          },
+          {
+            "minute": 132,
+            "value": 0
+          },
+          {
+            "minute": 384,
+            "value": 8
+          },
+          {
+            "minute": 584,
+            "value": 3851
+          },
+          {
+            "minute": 827,
+            "value": 3581
+          },
+          {
+            "minute": 1005,
+            "value": 3286
+          },
+          {
+            "minute": 1255,
+            "value": 1685
+          },
+          {
+            "minute": 1320,
+            "value": 0
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 307,
+            "value": 5
+          },
+          {
+            "minute": 554,
+            "value": 3370
+          },
+          {
+            "minute": 829,
+            "value": 3438
+          },
+          {
+            "minute": 1125,
+            "value": 2739
+          },
+          {
+            "minute": 1329,
+            "value": 3
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ]
+      ]
+    },
+    {
+      "name": "Preset 2",
+      "channels": [
+        [
+          {
+            "minute": 220,
+            "value": 0
+          },
+          {
+            "minute": 315,
+            "value": 4080
+          },
+          {
+            "minute": 385,
+            "value": 768
+          },
+          {
+            "minute": 487,
+            "value": 0
+          },
+          {
+            "minute": 668,
+            "value": 4080
+          },
+          {
+            "minute": 911,
+            "value": 256
+          },
+          {
+            "minute": 1268,
+            "value": 4080
+          },
+          {
+            "minute": 1409,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 8,
+            "value": 0
+          },
+          {
+            "minute": 264,
+            "value": 256
+          },
+          {
+            "minute": 390,
+            "value": 4080
+          },
+          {
+            "minute": 504,
+            "value": 4080
+          },
+          {
+            "minute": 844,
+            "value": 4080
+          },
+          {
+            "minute": 1034,
+            "value": 256
+          },
+          {
+            "minute": 1420,
+            "value": 256
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 484,
+            "value": 512
+          },
+          {
+            "minute": 578,
+            "value": 4080
+          },
+          {
+            "minute": 689,
+            "value": 4080
+          },
+          {
+            "minute": 1058,
+            "value": 4080
+          },
+          {
+            "minute": 1175,
+            "value": 0
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 148,
+            "value": 0
+          },
+          {
+            "minute": 307,
+            "value": 4080
+          },
+          {
+            "minute": 563,
+            "value": 1280
+          },
+          {
+            "minute": 726,
+            "value": 4080
+          },
+          {
+            "minute": 944,
+            "value": 4080
+          },
+          {
+            "minute": 1097,
+            "value": 256
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 483,
+            "value": 512
+          },
+          {
+            "minute": 803,
+            "value": 4080
+          },
+          {
+            "minute": 1027,
+            "value": 1280
+          },
+          {
+            "minute": 1110,
+            "value": 4080
+          },
+          {
+            "minute": 1422,
+            "value": 0
+          }
+        ]
+      ]
+    },
+    {
+      "name": "Preset 3",
+      "channels": [
+        [
+          {
+            "minute": 260,
+            "value": 0
+          },
+          {
+            "minute": 445,
+            "value": 4080
+          },
+          {
+            "minute": 537,
+            "value": 4080
+          },
+          {
+            "minute": 748,
+            "value": 4080
+          },
+          {
+            "minute": 1046,
+            "value": 4080
+          },
+          {
+            "minute": 1191,
+            "value": 4080
+          },
+          {
+            "minute": 1362,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 272,
+            "value": 0
+          },
+          {
+            "minute": 674,
+            "value": 4080
+          },
+          {
+            "minute": 1007,
+            "value": 4080
+          },
+          {
+            "minute": 1376,
+            "value": 256
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 283,
+            "value": 2816
+          },
+          {
+            "minute": 516,
+            "value": 4080
+          },
+          {
+            "minute": 729,
+            "value": 4080
+          },
+          {
+            "minute": 1020,
+            "value": 4080
+          },
+          {
+            "minute": 1350,
+            "value": 256
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 454,
+            "value": 4080
+          },
+          {
+            "minute": 486,
+            "value": 4080
+          },
+          {
+            "minute": 644,
+            "value": 4080
+          },
+          {
+            "minute": 730,
+            "value": 4080
+          },
+          {
+            "minute": 1020,
+            "value": 4080
+          },
+          {
+            "minute": 1310,
+            "value": 3584
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 355,
+            "value": 4080
+          },
+          {
+            "minute": 437,
+            "value": 4080
+          },
+          {
+            "minute": 739,
+            "value": 4080
+          },
+          {
+            "minute": 979,
+            "value": 4080
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ]
+      ]
+    },
+    {
+      "name": "Alles aan",
+      "channels": [
+        [
+          {
+            "minute": 445,
+            "value": 4080
+          },
+          {
+            "minute": 1007,
+            "value": 660
+          }
+        ],
+        [
+          {
+            "minute": 674,
+            "value": 4080
+          },
+          {
+            "minute": 1007,
+            "value": 4080
+          }
+        ],
+        [
+          {
+            "minute": 516,
+            "value": 4080
+          },
+          {
+            "minute": 729,
+            "value": 4080
+          },
+          {
+            "minute": 1020,
+            "value": 4080
+          }
+        ],
+        [
+          {
+            "minute": 454,
+            "value": 4080
+          },
+          {
+            "minute": 1020,
+            "value": 4080
+          }
+        ],
+        [
+          {
+            "minute": 355,
+            "value": 4080
+          },
+          {
+            "minute": 437,
+            "value": 4080
+          },
+          {
+            "minute": 739,
+            "value": 4080
+          },
+          {
+            "minute": 979,
+            "value": 4080
+          }
+        ]
+      ]
+    },
+    {
+      "name": "kanaal 1",
+      "channels": [
+        [
+          {
+            "minute": 287,
+            "value": 4080
+          },
+          {
+            "minute": 1280,
+            "value": 4080
+          }
+        ],
+        [
+          {
+            "minute": 272,
+            "value": 0
+          },
+          {
+            "minute": 1376,
+            "value": 256
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 288,
+            "value": 48
+          },
+          {
+            "minute": 1342,
+            "value": 240
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 447,
+            "value": 96
+          },
+          {
+            "minute": 1297,
+            "value": 48
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 362,
+            "value": 112
+          },
+          {
+            "minute": 986,
+            "value": 32
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ]
+      ]
+    },
+    {
+      "name": "kanaal 2",
+      "channels": [
+        [
+          {
+            "minute": 282,
+            "value": 16
+          },
+          {
+            "minute": 1209,
+            "value": 112
+          }
+        ],
+        [
+          {
+            "minute": 304,
+            "value": 4080
+          },
+          {
+            "minute": 1363,
+            "value": 4080
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 288,
+            "value": 48
+          },
+          {
+            "minute": 1342,
+            "value": 240
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 447,
+            "value": 96
+          },
+          {
+            "minute": 1297,
+            "value": 48
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 362,
+            "value": 112
+          },
+          {
+            "minute": 986,
+            "value": 32
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ]
+      ]
+    },
+    {
+      "name": "kanaal 3",
+      "channels": [
+        [
+          {
+            "minute": 282,
+            "value": 16
+          },
+          {
+            "minute": 1209,
+            "value": 112
+          }
+        ],
+        [
+          {
+            "minute": 298,
+            "value": 16
+          },
+          {
+            "minute": 1282,
+            "value": 16
+          }
+        ],
+        [
+          {
+            "minute": 314,
+            "value": 4080
+          },
+          {
+            "minute": 1307,
+            "value": 4080
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 447,
+            "value": 96
+          },
+          {
+            "minute": 1297,
+            "value": 48
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 362,
+            "value": 112
+          },
+          {
+            "minute": 986,
+            "value": 32
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ]
+      ]
+    },
+    {
+      "name": "Preset 8",
+      "channels": [
+        [
+          {
+            "minute": 260,
+            "value": 0
+          },
+          {
+            "minute": 445,
+            "value": 4080
+          },
+          {
+            "minute": 537,
+            "value": 4080
+          },
+          {
+            "minute": 748,
+            "value": 4080
+          },
+          {
+            "minute": 1032,
+            "value": 4080
+          },
+          {
+            "minute": 1191,
+            "value": 4080
+          },
+          {
+            "minute": 1362,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 272,
+            "value": 0
+          },
+          {
+            "minute": 487,
+            "value": 4080
+          },
+          {
+            "minute": 674,
+            "value": 4080
+          },
+          {
+            "minute": 1007,
+            "value": 4080
+          },
+          {
+            "minute": 1376,
+            "value": 256
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 283,
+            "value": 2816
+          },
+          {
+            "minute": 516,
+            "value": 4080
+          },
+          {
+            "minute": 729,
+            "value": 4080
+          },
+          {
+            "minute": 1021,
+            "value": 4080
+          },
+          {
+            "minute": 1064,
+            "value": 4080
+          },
+          {
+            "minute": 1350,
+            "value": 256
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 454,
+            "value": 4080
+          },
+          {
+            "minute": 486,
+            "value": 4080
+          },
+          {
+            "minute": 644,
+            "value": 4080
+          },
+          {
+            "minute": 730,
+            "value": 4080
+          },
+          {
+            "minute": 1030,
+            "value": 4080
+          },
+          {
+            "minute": 1310,
+            "value": 3584
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ],
+        [
+          {
+            "minute": 0,
+            "value": 0
+          },
+          {
+            "minute": 355,
+            "value": 4080
+          },
+          {
+            "minute": 437,
+            "value": 4080
+          },
+          {
+            "minute": 739,
+            "value": 4080
+          },
+          {
+            "minute": 999,
+            "value": 4080
+          },
+          {
+            "minute": 1439,
+            "value": 0
+          }
+        ]
+      ]
+    }
+  ]
+}
