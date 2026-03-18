@@ -1,6 +1,9 @@
 {
   "activePreset": 0,
   "simulationDaySeconds": 10,
+  "moonlightEnabled": true,
+  "moonlightChannel": 3,
+  "moonlightIntensity": 2470,
   "cloudSimEnabled": true,
   "cloudChannelEnabled": [
     true,
@@ -13,19 +16,19 @@
     8,
     8,
     8,
-    8,
+    15,
     8
   ],
   "cloudMinDurationSec": [
+    4,
+    3,
     5,
-    5,
-    5,
-    5,
+    10,
     5
   ],
   "cloudEventsPerDay": [
-    3020,
-    3000,
+    5000,
+    5000,
     5000,
     3000,
     3000
@@ -33,7 +36,7 @@
   "cloudDimPercent": [
     100,
     100,
-    60,
+    100,
     60,
     60
   ],
@@ -43,6 +46,13 @@
     "#ffe4a8",
     "#ffaa00",
     "#ffaa00"
+  ],
+  "channelMaxWatts": [
+    15,
+    15,
+    15,
+    15,
+    15
   ],
   "presets": [
     {
@@ -512,7 +522,7 @@
           },
           {
             "minute": 1007,
-            "value": 660
+            "value": 4090
           }
         ],
         [
@@ -790,157 +800,6 @@
           {
             "minute": 986,
             "value": 32
-          },
-          {
-            "minute": 1439,
-            "value": 0
-          }
-        ]
-      ]
-    },
-    {
-      "name": "Preset 8",
-      "channels": [
-        [
-          {
-            "minute": 260,
-            "value": 0
-          },
-          {
-            "minute": 445,
-            "value": 4080
-          },
-          {
-            "minute": 537,
-            "value": 4080
-          },
-          {
-            "minute": 748,
-            "value": 4080
-          },
-          {
-            "minute": 1032,
-            "value": 4080
-          },
-          {
-            "minute": 1191,
-            "value": 4080
-          },
-          {
-            "minute": 1362,
-            "value": 0
-          }
-        ],
-        [
-          {
-            "minute": 272,
-            "value": 0
-          },
-          {
-            "minute": 487,
-            "value": 4080
-          },
-          {
-            "minute": 674,
-            "value": 4080
-          },
-          {
-            "minute": 1007,
-            "value": 4080
-          },
-          {
-            "minute": 1376,
-            "value": 256
-          }
-        ],
-        [
-          {
-            "minute": 0,
-            "value": 0
-          },
-          {
-            "minute": 283,
-            "value": 2816
-          },
-          {
-            "minute": 516,
-            "value": 4080
-          },
-          {
-            "minute": 729,
-            "value": 4080
-          },
-          {
-            "minute": 1021,
-            "value": 4080
-          },
-          {
-            "minute": 1064,
-            "value": 4080
-          },
-          {
-            "minute": 1350,
-            "value": 256
-          },
-          {
-            "minute": 1439,
-            "value": 0
-          }
-        ],
-        [
-          {
-            "minute": 0,
-            "value": 0
-          },
-          {
-            "minute": 454,
-            "value": 4080
-          },
-          {
-            "minute": 486,
-            "value": 4080
-          },
-          {
-            "minute": 644,
-            "value": 4080
-          },
-          {
-            "minute": 730,
-            "value": 4080
-          },
-          {
-            "minute": 1030,
-            "value": 4080
-          },
-          {
-            "minute": 1310,
-            "value": 3584
-          },
-          {
-            "minute": 1439,
-            "value": 0
-          }
-        ],
-        [
-          {
-            "minute": 0,
-            "value": 0
-          },
-          {
-            "minute": 355,
-            "value": 4080
-          },
-          {
-            "minute": 437,
-            "value": 4080
-          },
-          {
-            "minute": 739,
-            "value": 4080
-          },
-          {
-            "minute": 999,
-            "value": 4080
           },
           {
             "minute": 1439,
