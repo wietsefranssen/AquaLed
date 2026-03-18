@@ -14,7 +14,7 @@ String mqttDeviceId() {
 void mqttPublishState() {
     if (!mqttClient.connected()) return;
     const String id = mqttDeviceId();
-    DynamicJsonDocument doc(512);
+    DynamicJsonDocument doc(768);
     doc["masterEnabled"]        = masterEnabled;
     doc["simulationActive"]     = simulationActive;
     doc["simulationDaySeconds"] = simulationDaySeconds;
@@ -32,6 +32,8 @@ void mqttPublishState() {
     doc["cloudNextInSec"]       = cloudNextInSeconds();
     JsonArray outs = doc.createNestedArray("outputs");
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outs.add(currentOutputs[ch]);
+    JsonArray colors = doc.createNestedArray("channelColors");
+    for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) colors.add(gData.channelColors[ch]);
     String payload;
     serializeJson(doc, payload);
     mqttClient.publish(("aqualed/" + id + "/state").c_str(), payload.c_str(), true);
@@ -139,9 +141,11 @@ void mqttPublishDiscovery() {
         d["name"]    = String("AquaLed Kanaal ") + (ch + 1);
         d["uniq_id"] = id + "_ch" + (ch + 1);
         d["stat_t"]  = base + "/state";
-        d["val_tpl"] = String("{{ (value_json.outputs[") + ch + String("] / 4095 * 100) | round(0) | int }}");
+        d["val_tpl"] = String("{{ ((value_json.outputs[") + ch + String("] | float(0)) / 4095 * 100) | round(1) }}");
         d["avty_t"]  = avty;
         d["unit_of_measurement"] = "%";
+        d["state_class"] = "measurement";
+        d["sug_dsp_prc"] = 1;
         d["icon"]    = "mdi:brightness-percent";
         addDev(d);
         pub("sensor", String("ch") + (ch + 1), d);
