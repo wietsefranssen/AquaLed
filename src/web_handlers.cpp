@@ -70,6 +70,9 @@ String stateJson() {
     doc["mqttDeviceId"]          = mqttDeviceId();
     doc["version"]               = FIRMWARE_VERSION;
     doc["uptimeSec"]             = millis() / 1000UL;
+    doc["freeHeap"]              = ESP.getFreeHeap();
+    doc["minFreeHeap"]           = ESP.getMinFreeHeap();
+    doc["maxAllocHeap"]          = ESP.getMaxAllocHeap();
     doc["moonlightEnabled"]      = moonlightEnabled;
     doc["moonlightChannel"]      = moonlightChannel;
     doc["moonlightIntensity"]    = moonlightIntensity;
@@ -784,6 +787,25 @@ void setupWebServer() {
     server.on("/api/cloud/save",         HTTP_POST, handleCloudSave);
     server.on("/api/schedule/export",    HTTP_GET,  handleScheduleExport);
     server.on("/api/schedule/import",    HTTP_POST, handleScheduleImport);
+    server.on("/api/restart", HTTP_POST, []() {
+        DynamicJsonDocument resp(64);
+        resp["ok"] = true;
+        sendJson(200, resp);
+        delay(300);
+        ESP.restart();
+    });
+    server.on("/api/factory-reset", HTTP_POST, []() {
+        if (fsReady) {
+            LittleFS.remove(SCHEDULE_FILE);
+            LittleFS.remove(WIFI_FILE);
+            LittleFS.remove(MQTT_FILE);
+        }
+        DynamicJsonDocument resp(64);
+        resp["ok"] = true;
+        sendJson(200, resp);
+        delay(300);
+        ESP.restart();
+    });
 
     server.on("/api/ota/upload", HTTP_POST,
         []() {

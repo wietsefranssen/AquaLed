@@ -253,6 +253,16 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     </section>
 
     <section class="card">
+      <h2>Controller reset</h2>
+      <div class="sub">Herstart de controller of herstel alle instellingen naar de standaardwaarden (factory reset). Bij factory reset worden alle presets, WiFi- en MQTT-instellingen gewist.</div>
+      <div class="toolbar" style="margin-top:10px;gap:12px;">
+        <button id="btnRestart" class="primary">Herstart controller</button>
+        <button id="btnFactoryReset" style="background:var(--danger,#c0392b);color:#fff;border:none;border-radius:10px;padding:10px 18px;cursor:pointer;font-size:1rem;">Factory reset</button>
+      </div>
+      <div id="resetStatus" class="status"></div>
+    </section>
+
+    <section class="card">
       <h2>Firmware update (OTA)</h2>
       <div class="sub">Upload een nieuw firmware bestand (.bin) om de controller draadloos bij te werken.</div>
       <div class="row" style="margin-top:10px;">
@@ -308,7 +318,10 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     firmwareFile: document.getElementById("firmwareFile"),
     btnOtaUpload: document.getElementById("btnOtaUpload"),
     otaProgress:  document.getElementById("otaProgress"),
-    otaStatus:    document.getElementById("otaStatus")
+    otaStatus:    document.getElementById("otaStatus"),
+    btnRestart:      document.getElementById("btnRestart"),
+    btnFactoryReset: document.getElementById("btnFactoryReset"),
+    resetStatus:     document.getElementById("resetStatus")
   };
 
   const Api = {
@@ -505,8 +518,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       "ntpSynced: " + (!!s.ntpSynced) + "\n" +
       "manualTime: " + (!!s.manualTime) + "\n" +
       "tijd: " + String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0") + "\n" +
-      "uptime: " + (()=>{ const u=s.uptimeSec||0; const uh=Math.floor(u/3600); const um=Math.floor((u%3600)/60); const us=u%60; return String(uh).padStart(2,"0")+":"+String(um).padStart(2,"0")+":"+String(us).padStart(2,"0"); })() + "\n" +
-      moonLine + "\n" +
+      "uptime: " + (()=>{ const u=s.uptimeSec||0; const uh=Math.floor(u/3600); const um=Math.floor((u%3600)/60); const us=u%60; return String(uh).padStart(2,"0")+":"+String(um).padStart(2,"0")+":"+String(us).padStart(2,"0"); })() + "\n" +      (typeof s.freeHeap === "number" ? "heap: " + Math.round(s.freeHeap/1024) + " kB vrij | min: " + Math.round(s.minFreeHeap/1024) + " kB | maxAlloc: " + Math.round(s.maxAllocHeap/1024) + " kB" : "") + "\n" +      moonLine + "\n" +
       cloudLine;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
     // Maanlicht
@@ -656,6 +668,28 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     el.btnMqttSave.onclick  = saveMqtt;
     el.btnMoonlightSave.onclick = saveMoonlight;
     el.btnCloudSave.onclick = saveCloud;
+    el.btnRestart.onclick = async () => {
+      if (!confirm("Controller herstarten?")) return;
+      try {
+        setStatus(el.resetStatus, "Herstart bezig...", "");
+        await Api.call("/api/restart", "POST");
+        setStatus(el.resetStatus, "Herstart verzonden. Pagina herlaadt over 8 seconden...", "ok");
+        setTimeout(() => location.reload(), 8000);
+      } catch (e) {
+        setStatus(el.resetStatus, "Fout: " + e.message, "err");
+      }
+    };
+    el.btnFactoryReset.onclick = async () => {
+      if (!confirm("ALLE instellingen en presets wissen en herstarten? Dit kan niet ongedaan worden gemaakt!")) return;
+      try {
+        setStatus(el.resetStatus, "Factory reset bezig...", "");
+        await Api.call("/api/factory-reset", "POST");
+        setStatus(el.resetStatus, "Factory reset verzonden. Pagina herlaadt over 8 seconden...", "ok");
+        setTimeout(() => location.reload(), 8000);
+      } catch (e) {
+        setStatus(el.resetStatus, "Fout: " + e.message, "err");
+      }
+    };
     el.moonlightIntensity.oninput = () => { el.moonlightIntensityVal.textContent = el.moonlightIntensity.value; };
     el.btnOtaUpload.onclick = () => {
       const file = el.firmwareFile.files[0];
