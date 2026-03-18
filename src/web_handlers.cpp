@@ -484,6 +484,9 @@ void handleScheduleExport() {
     DynamicJsonDocument doc(28672);
     doc["activePreset"]          = gData.activePreset;
     doc["simulationDaySeconds"]  = simulationDaySeconds;
+    doc["moonlightEnabled"]      = moonlightEnabled;
+    doc["moonlightChannel"]      = moonlightChannel;
+    doc["moonlightIntensity"]    = moonlightIntensity;
     doc["cloudSimEnabled"]       = cloudSimEnabled;
     JsonArray jCloudEnabled = doc.createNestedArray("cloudChannelEnabled");
     JsonArray jCloudAvgSec  = doc.createNestedArray("cloudAvgDurationSec");
@@ -572,6 +575,12 @@ void handleScheduleImport() {
     gData = newData;
     if (!body["simulationDaySeconds"].isNull())
         simulationDaySeconds = clampSimulationSeconds(body["simulationDaySeconds"]);
+    if (!body["moonlightEnabled"].isNull())
+        moonlightEnabled = body["moonlightEnabled"] | moonlightEnabled;
+    if (!body["moonlightChannel"].isNull())
+        moonlightChannel = static_cast<int8_t>(body["moonlightChannel"].as<int>());
+    if (!body["moonlightIntensity"].isNull())
+        moonlightIntensity = clampValue(body["moonlightIntensity"] | moonlightIntensity);
     if (!body["cloudSimEnabled"].isNull())
         cloudSimEnabled = body["cloudSimEnabled"] | cloudSimEnabled;
 

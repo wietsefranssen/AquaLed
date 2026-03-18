@@ -336,6 +336,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   let channelColors = [...defaultColors];
   let channelMaxWatts = [0, 0, 0, 0, 0];
   let wattsDirty = false;
+  let moonlightDirty = false;
   const CLOUD_DEFAULT_AVG_DURATION_SEC = 30;
   const CLOUD_DEFAULT_MIN_DURATION_SEC = 10;
   const CLOUD_DEFAULT_EVENTS_PER_DAY = 100;
@@ -439,6 +440,12 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
     }
   }
 
+  function bindMoonlightDirtyHandlers() {
+    el.moonlightEnabled.addEventListener("change", () => { moonlightDirty = true; });
+    el.moonlightChannel.addEventListener("change", () => { moonlightDirty = true; });
+    el.moonlightIntensity.addEventListener("input", () => { moonlightDirty = true; });
+  }
+
   let colorsLoaded = false;
   let cloudSettingsLoaded = false;
   function renderState(s) {
@@ -503,11 +510,13 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
       cloudLine;
     if (s.version) document.getElementById("versionTag").textContent = s.version;
     // Maanlicht
-    if (typeof s.moonlightEnabled === "boolean") el.moonlightEnabled.checked = s.moonlightEnabled;
-    if (typeof s.moonlightChannel === "number") el.moonlightChannel.value = String(s.moonlightChannel);
-    if (typeof s.moonlightIntensity === "number") {
-      el.moonlightIntensity.value = s.moonlightIntensity;
-      el.moonlightIntensityVal.textContent = s.moonlightIntensity;
+    if (!moonlightDirty) {
+      if (typeof s.moonlightEnabled === "boolean") el.moonlightEnabled.checked = s.moonlightEnabled;
+      if (typeof s.moonlightChannel === "number") el.moonlightChannel.value = String(s.moonlightChannel);
+      if (typeof s.moonlightIntensity === "number") {
+        el.moonlightIntensity.value = s.moonlightIntensity;
+        el.moonlightIntensityVal.textContent = s.moonlightIntensity;
+      }
     }
     if (!cloudSettingsLoaded) {
       cloudSettingsLoaded = true;
@@ -534,7 +543,9 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
         channel:   Number(el.moonlightChannel.value),
         intensity: Number(el.moonlightIntensity.value)
       });
+      moonlightDirty = false;
       setStatus(el.moonlightStatus, out.ok ? "Maanlicht opgeslagen" : "Opslaan mislukt", out.ok ? "ok" : "err");
+      await refresh();
     } catch (e) {
       setStatus(el.moonlightStatus, "Opslaan mislukt: " + e.message, "err");
     }
@@ -691,6 +702,7 @@ const char SETTINGS_HTML[] PROGMEM = R"rawliteral(
   async function boot() {
     buildColorPickers();
     buildCloudEditors();
+    bindMoonlightDirtyHandlers();
     bind();
     await refresh();
     setInterval(async () => {
