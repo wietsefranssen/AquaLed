@@ -385,6 +385,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     if (state.cloudSimEnabled) {
       badges += '<span class="live-badge badge-sim">WOLKEN ' + (state.cloudActive ? 'ACTIEF' : 'AAN') + '</span> ';
     }
+    if (state.moonlightEnabled && state.moonlightChannel >= 0) {
+      badges += '<span class="live-badge badge-sim">MAAN ' + (state.moonlightActive ? 'ACTIEF' : 'AAN') + '</span> ';
+    }
 
     let bars = '';
     for (let i = 0; i < CHANNELS; i++) {
@@ -922,6 +925,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           state.masterEnabled = s.masterEnabled !== false;
           state.cloudSimEnabled = !!s.cloudSimEnabled;
           state.cloudActive = !!s.cloudActive;
+          state.moonlightEnabled = !!s.moonlightEnabled;
+          state.moonlightChannel = typeof s.moonlightChannel === "number" ? s.moonlightChannel : state.moonlightChannel;
+          state.moonlightIntensity = typeof s.moonlightIntensity === "number" ? s.moonlightIntensity : state.moonlightIntensity;
+          state.moonPhase = typeof s.moonPhase === "number" ? s.moonPhase : state.moonPhase;
+          state.moonlightActive = !!s.moonlightActive;
           if (typeof s.cloudNextInSec === "number") state.cloudNextInSec = s.cloudNextInSec;
           if (typeof s.cloudEventsPerDay === "number") state.cloudEventsPerDay = s.cloudEventsPerDay;
           if (typeof s.cloudAvgDurationSec === "number") state.cloudAvgDurationSec = s.cloudAvgDurationSec;

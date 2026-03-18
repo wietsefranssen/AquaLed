@@ -155,6 +155,11 @@ void handleGetStateLight() {
     doc["previewActive"]        = previewActive;
     doc["masterEnabled"]        = masterEnabled;
     doc["masterBrightness"]     = masterBrightness;
+    doc["moonlightEnabled"]     = moonlightEnabled;
+    doc["moonlightChannel"]     = moonlightChannel;
+    doc["moonlightIntensity"]   = moonlightIntensity;
+    doc["moonPhase"]            = calcMoonPhase();
+    doc["moonlightActive"]      = moonlightCurrentlyActive;
     doc["cloudSimEnabled"]      = cloudSimEnabled;
     doc["cloudActive"]          = cloudActiveCount() > 0;
     doc["cloudActiveCount"]     = cloudActiveCount();
