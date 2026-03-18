@@ -184,12 +184,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="stat">
           <span class="stat-kicker">Testmodus</span>
           <div id="simStateHero" class="stat-value">Live</div>
-          <div class="stat-note">Simulatie en preview blijven direct beschikbaar</div>
+          <div class="stat-note">Schakel snel tussen live weergave, preview en simulatie</div>
         </div>
         <div class="stat">
           <span class="stat-kicker">Weergave</span>
           <div id="previewHeroTime" class="stat-value">--:--</div>
-          <div class="stat-note">Geselecteerd tijdstip voor preview</div>
+          <div class="stat-note">Tijdstip dat nu in beeld is</div>
         </div>
       </div>
     </section>
@@ -213,12 +213,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <input id="activePresetName" placeholder="Huidige presetnaam aanpassen">
           </div>
           <div class="button-cluster">
-            <button id="btnOverwrite">Actieve preset bijwerken</button>
+            <button id="btnOverwrite">Preset bijwerken</button>
             <button id="btnRename">Preset hernoemen</button>
-            <button id="btnRevert">Aanpassingen ongedaan maken</button>
             <button id="btnDelete" class="danger-button">Preset verwijderen</button>
           </div>
-          <div class="small">Bijwerken slaat de huidige curve op in de geselecteerde preset. Ongedaan maken laadt de opgeslagen preset opnieuw zonder iets op te slaan.</div>
+          <div class="small">Bijwerken slaat de huidige curve op in de geselecteerde preset. Hernoemen wijzigt alleen de naam van de geselecteerde preset.</div>
         </div>
         <div class="control-panel">
           <div class="field">
@@ -229,9 +228,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <button id="btnSaveNew" class="primary">Nieuwe preset opslaan</button>
           </div>
           <div class="field">
-            <label>Extra acties</label>
+            <label>Bibliotheekacties</label>
             <div class="button-cluster">
-              <button id="btnCurveEditLock" class="ghost-button" title="Voorkom per ongeluk aanpassen van de curve">🔒 Curve vergrendeld</button>
               <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Presets exporteren</button>
               <button id="btnImport" title="Importeer presets uit JSON-bestand">⬆ Presets importeren</button>
             </div>
@@ -249,14 +247,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <div class="section-head">
         <div>
           <h2>Testen & tijdsweergave</h2>
-          <div class="section-sub">Speel een volledige dag versneld af of kies handmatig een tijdstip om direct te zien hoe de huidige preset eruitziet.</div>
+          <div class="section-sub">Start een simulatie voor een volledige dag of kies een previewtijd om direct te zien hoe de huidige preset eruitziet.</div>
         </div>
       </div>
       <div class="preview-stack">
         <div class="control-grid">
           <div class="control-panel">
             <div class="field">
-              <label for="simSeconds">Versnelde dagduur</label>
+              <label for="simSeconds">Simulatiesnelheid</label>
               <div class="slider-row">
                 <select id="simSeconds">
                   <option value="10">10 sec</option>
@@ -266,10 +264,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                   <option value="300">5 min</option>
                   <option value="600">10 min</option>
                 </select>
-                <button id="btnSimStart" class="primary">Versnelde simulatie starten</button>
+                <button id="btnSimStart" class="primary">Simulatie starten</button>
               </div>
             </div>
-            <span id="simState" class="small strong">Live modus</span>
+            <span id="simState" class="small strong">Live weergave</span>
           </div>
           <div class="control-panel">
             <div class="field">
@@ -279,26 +277,26 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <span id="brightnessVal" class="small strong" style="min-width:52px;">100%</span>
               </div>
             </div>
-            <div class="small">Helderheid schaalt de gecombineerde preview zonder de presetdata te wijzigen.</div>
+            <div class="small">Schaalt alleen de getoonde lichtsterkte en verandert de preset zelf niet.</div>
           </div>
         </div>
 
         <div class="control-panel">
           <div class="field">
-            <label for="previewSlider">Preview tijdstip</label>
+            <label for="previewSlider">Previewtijd</label>
             <div class="slider-row">
               <input type="range" id="previewSlider" min="0" max="1439" value="0">
               <span id="previewTime" class="small strong" style="min-width:54px;">--:--</span>
             </div>
           </div>
           <div class="info-pills">
-            <span class="pill">Sleep om een tijdstip te beoordelen</span>
-            <span class="pill">Preview stopt live polling tijdelijk</span>
+            <span class="pill">Sleep om een tijdstip te bekijken</span>
+            <span class="pill">Preview pauzeert live verversen tijdelijk</span>
           </div>
         </div>
 
         <div class="control-panel" id="resumeBar" style="display:none;">
-          <button id="btnResume" class="primary" style="flex:1;">Terug naar live dagcurve</button>
+          <button id="btnResume" class="primary" style="flex:1;">Live weergave hervatten</button>
         </div>
       </div>
     </section>
@@ -310,8 +308,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <h2>Curve-editor</h2>
             <div class="section-sub">Klik om punten toe te voegen, sleep voor finetuning en gebruik rechtsklik om een punt te verwijderen.</div>
           </div>
+          <div class="button-cluster">
+            <button id="btnCurveEditLock" class="ghost-button" title="Voorkom per ongeluk aanpassen van de curve">🔒 Curve vergrendeld</button>
+            <button id="btnRevert">Aanpassingen ongedaan maken</button>
+          </div>
         </div>
-        <div class="hint">De verticale markering volgt live tijd of previewtijd. De gecombineerde grafiek toont het resultaat na helderheidsscaling.</div>
+        <div class="hint">De verticale markering volgt live tijd of previewtijd. Ongedaan maken herlaadt de opgeslagen preset zonder iets op te slaan. De gecombineerde grafiek toont het resultaat na helderheidsscaling.</div>
         <div style="font-weight:700;font-size:.86rem;margin-bottom:6px;color:var(--muted);">Gecombineerd kanaaloverzicht</div>
         <canvas id="canvasCombined" style="width:100%;height:110px;display:block;border:1px solid #d4e0d8;border-radius:10px;background:#f9fcfa;margin-bottom:12px;"></canvas>
         <div id="channels" class="channels"></div>
@@ -697,8 +699,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     el.simSeconds.value = state.simulationDaySeconds;
     el.simState.textContent = state.simulationActive
-      ? "Simulatie actief: 1 dag in " + state.simulationDaySeconds + " seconden"
-      : (state.previewMinute !== null ? "Preview actief op " + fmtMin(state.previewMinute) : "Live modus");
+      ? "Simulatie actief · 1 dag in " + state.simulationDaySeconds + " sec"
+      : (state.previewMinute !== null ? "Preview · " + fmtMin(state.previewMinute) : "Live weergave");
     el.simStateHero.textContent = state.simulationActive
       ? "Simulatie"
       : (state.previewMinute !== null ? "Preview" : "Live");
