@@ -10,100 +10,314 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AquaLed Scheduler</title>
   <style>
-    body { font-family: "Avenir Next", "Segoe UI", sans-serif; margin: 0; padding: 16px; background: #f3f5ef; color: #102018; }
-    .card { background: #fff; border: 1px solid #d6e2d8; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    button, input, select, a { border: 1px solid #b7c9bc; border-radius: 8px; padding: 8px 10px; background: #fff; color: #102018; text-decoration: none; }
-    button.primary { background: #1d6a5c; border-color: #1d6a5c; color: #fff; }
-    .status { font-size: .9rem; color: #5b6f64; }
-    .channels { display: grid; gap: 10px; }
-    .ch { border: 1px solid #d6e2d8; border-radius: 10px; padding: 8px; background: #fff; }
-    canvas { width: 100%; height: 160px; display: block; border: 1px solid #d4e0d8; border-radius: 8px; background: #f9fcfa; touch-action: none; }
+    :root {
+      --bg: #f4f2eb;
+      --bg-accent: #e5efe8;
+      --card: rgba(255, 255, 255, 0.88);
+      --card-strong: rgba(255, 255, 255, 0.96);
+      --text: #102018;
+      --muted: #5b6f64;
+      --line: #d6e2d8;
+      --brand: #1d6a5c;
+      --brand-deep: #164f45;
+      --brand-soft: #dbece5;
+      --warn: #922b21;
+      --warn-soft: #f8d7da;
+      --shadow: 0 14px 36px rgba(26, 45, 34, 0.10);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 18px;
+      background:
+        radial-gradient(circle at top left, rgba(214, 232, 220, 0.95), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(214, 225, 239, 0.9), transparent 28%),
+        linear-gradient(180deg, var(--bg-accent), var(--bg));
+      color: var(--text);
+    }
+    button, input, select, a {
+      border: 1px solid #b7c9bc;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: linear-gradient(180deg, #ffffff, #f3f7f4);
+      color: var(--text);
+      text-decoration: none;
+      transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+    }
+    button:hover, a:hover, select:hover, input:hover { border-color: #99b1a2; }
+    button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(29, 106, 92, 0.18);
+    }
+    button.primary { background: linear-gradient(180deg, #2a8b79, var(--brand)); border-color: var(--brand); color: #fff; }
+    .page { width: min(1240px, 100%); margin: 0 auto; }
+    .card {
+      background: var(--card);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(214, 226, 216, 0.95);
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+    .hero {
+      display: grid;
+      gap: 14px;
+      align-items: center;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.96), rgba(238, 246, 241, 0.92)),
+        var(--card-strong);
+    }
+    @media (min-width: 900px) { .hero { grid-template-columns: 1.35fr .85fr; } }
+    .hero h1 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.4rem); }
+    .hero p { margin: 8px 0 0; color: var(--muted); max-width: 60ch; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-start; }
+    .hero-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .stat {
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid rgba(214, 226, 216, 0.95);
+      min-height: 82px;
+    }
+    .stat-kicker { display: block; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: #6d8277; margin-bottom: 6px; }
+    .stat-value { font-size: 1.15rem; font-weight: 700; }
+    .stat-note { margin-top: 4px; font-size: .86rem; color: var(--muted); }
+    .section-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+    .section-head h2, .section-head h3 { margin: 0; }
+    .section-sub { color: var(--muted); font-size: .92rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .preset-grid { display: grid; gap: 12px; }
+    @media (min-width: 880px) { .preset-grid { grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); } }
+    .control-panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.65);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .control-grid { display: grid; gap: 10px; }
+    @media (min-width: 760px) { .control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .field { display: grid; gap: 6px; }
+    .field label { font-size: .85rem; color: var(--muted); font-weight: 600; }
+    .button-cluster { display: flex; flex-wrap: wrap; gap: 8px; }
+    .status { font-size: .9rem; color: var(--muted); }
+    .channels { display: grid; gap: 12px; }
+    .ch {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.88), rgba(246,250,247,0.92));
+    }
+    .ch-title { font-weight: 700; margin-bottom: 6px; }
+    canvas { width: 100%; height: 160px; display: block; border: 1px solid #d4e0d8; border-radius: 10px; background: #f9fcfa; touch-action: none; }
     pre { white-space: pre-wrap; }
-    .small { font-size: .85rem; color: #5b6f64; }
-    @media (min-width: 980px) { .layout { display: grid; grid-template-columns: 1.4fr .8fr; gap: 12px; } }
+    .small { font-size: .85rem; color: var(--muted); }
+    .small.strong { color: var(--brand-deep); font-weight: 600; }
+    @media (min-width: 980px) { .layout { display: grid; grid-template-columns: 1.45fr .8fr; gap: 14px; } }
     .live-grid { display: flex; flex-direction: column; gap: 10px; }
-    .live-row { display: flex; align-items: center; gap: 8px; font-size: .92rem; }
-    .live-label { color: #5b6f64; min-width: 70px; }
+    .live-row { display: flex; align-items: center; gap: 8px; font-size: .92rem; flex-wrap: wrap; }
+    .live-label { color: var(--muted); min-width: 84px; }
     .live-value { font-weight: 600; }
     .live-divider { border: none; border-top: 1px solid #e4ebe6; margin: 2px 0; }
-    .ch-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .ch-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
     .ch-swatch { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(0,0,0,.12); }
-    .ch-name { min-width: 28px; font-size: .85rem; color: #5b6f64; }
-    .ch-bar-track { flex: 1; height: 18px; background: #eef2ee; border-radius: 9px; overflow: hidden; position: relative; }
-    .ch-bar-fill { height: 100%; border-radius: 9px; transition: width .3s ease, background .3s ease; min-width: 0; }
+    .ch-name { min-width: 28px; font-size: .85rem; color: var(--muted); }
+    .ch-bar-track { flex: 1; height: 18px; background: #eef2ee; border-radius: 999px; overflow: hidden; position: relative; }
+    .ch-bar-fill { height: 100%; border-radius: 999px; transition: width .3s ease, background .3s ease; min-width: 0; }
     .ch-bar-pct { min-width: 38px; text-align: right; font-size: .85rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .live-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: .8rem; font-weight: 600; }
-    .badge-on { background: #d4edda; color: #1d6a5c; }
-    .badge-off { background: #f8d7da; color: #922b21; }
+    .live-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: .76rem; font-weight: 700; letter-spacing: .03em; }
+    .badge-on { background: #d4edda; color: var(--brand); }
+    .badge-off { background: var(--warn-soft); color: var(--warn); }
     .badge-sim { background: #fff3cd; color: #856404; }
     .badge-preview { background: #d1ecf1; color: #0c5460; }
-    .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-    .topbar h2 { margin: 0; flex: 1; font-size: 1.25rem; }
-    .hint { font-size: .82rem; color: #7a8f82; margin-bottom: 6px; }
+    .hint {
+      font-size: .84rem;
+      color: #6d8277;
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(239, 246, 241, 0.9);
+      border: 1px solid rgba(214, 226, 216, 0.9);
+    }
+    .curve-shell { padding: 2px; }
+    .preview-stack { display: grid; gap: 12px; }
+    .slider-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .slider-row input[type="range"] { flex: 1; min-width: 150px; }
+    .info-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--brand-deep);
+      font-size: .82rem;
+      font-weight: 600;
+    }
+    .ghost-button { background: #fff; }
+    .danger-button { color: var(--warn); border-color: #e6a19a; }
     .version-tag { position: fixed; bottom: 6px; right: 10px; font-size: .72rem; color: #7a8f82; opacity: .5; pointer-events: none; z-index: 999; }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <h2>AquaLed Dagcurve</h2>
-    <a href="/settings">⚙ Instellingen</a>
-    <button id="btnMasterToggle" class="primary" style="min-width:96px;">● AAN</button>
-  </div>
+  <div class="page">
+    <section class="card hero">
+      <div>
+        <h1>AquaLed Dagcurve</h1>
+        <p>Beheer presets, test tijdstippen en finetune kanaalcurves vanuit een overzichtelijke planner zonder dat de bestaande regeling verandert.</p>
+        <div class="hero-actions" style="margin-top:14px;">
+          <a href="/settings">⚙ Instellingen</a>
+          <button id="btnMasterToggle" class="primary" style="min-width:120px;">● Verlichting aan</button>
+        </div>
+      </div>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-kicker">Actieve preset</span>
+          <div id="presetMetaName" class="stat-value">-</div>
+          <div id="presetMetaCount" class="stat-note">Presetbibliotheek wordt geladen</div>
+        </div>
+        <div class="stat">
+          <span class="stat-kicker">Testmodus</span>
+          <div id="simStateHero" class="stat-value">Live</div>
+          <div class="stat-note">Simulatie en preview blijven direct beschikbaar</div>
+        </div>
+        <div class="stat">
+          <span class="stat-kicker">Weergave</span>
+          <div id="previewHeroTime" class="stat-value">--:--</div>
+          <div class="stat-note">Geselecteerd tijdstip voor preview</div>
+        </div>
+      </div>
+    </section>
 
-  <div class="card toolbar">
-    <label for="presetSelect">Preset</label>
-    <select id="presetSelect"></select>
-    <input id="presetName" placeholder="Naam nieuwe preset">
-    <button id="btnSaveNew" class="primary">Opslaan als nieuw</button>
-    <button id="btnOverwrite">Overschrijf</button>
-    <button id="btnDelete" style="color:#922b21;border-color:#e6a19a;">Verwijder</button>
-    <button id="btnCurveEditLock" title="Voorkom per ongeluk aanpassen van de curve">🔒 Bewerken vergrendeld</button>
-    <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Export</button>
-    <button id="btnImport" title="Importeer presets uit JSON-bestand">⬆ Import</button>
-    <input id="fileImport" type="file" accept=".json" style="display:none">
-    <span id="status" class="status">Klaar</span>
-  </div>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Presetbibliotheek</h2>
+          <div class="section-sub">Selecteer, hernoem, dupliceer of importeer presets met duidelijkere acties.</div>
+        </div>
+        <span id="status" class="status">Klaar</span>
+      </div>
+      <div class="preset-grid">
+        <div class="control-panel">
+          <div class="control-grid">
+            <div class="field">
+              <label for="presetSelect">Actieve preset</label>
+              <select id="presetSelect"></select>
+            </div>
+            <div class="field">
+              <label for="presetName">Naam voor nieuwe preset</label>
+              <input id="presetName" placeholder="Bijvoorbeeld: Ochtendrif of Avondblauw">
+            </div>
+          </div>
+          <div class="button-cluster">
+            <button id="btnSaveNew" class="primary">Nieuwe preset opslaan</button>
+            <button id="btnOverwrite">Actieve preset bijwerken</button>
+            <button id="btnDelete" class="danger-button">Preset verwijderen</button>
+          </div>
+        </div>
+        <div class="control-panel">
+          <div class="field">
+            <label>Veilige acties</label>
+            <div class="button-cluster">
+              <button id="btnCurveEditLock" class="ghost-button" title="Voorkom per ongeluk aanpassen van de curve">🔒 Curve vergrendeld</button>
+              <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Presets exporteren</button>
+              <button id="btnImport" title="Importeer presets uit JSON-bestand">⬆ Presets importeren</button>
+            </div>
+            <input id="fileImport" type="file" accept=".json" style="display:none">
+          </div>
+          <div class="info-pills">
+            <span class="pill">Tot 10 presets beschikbaar</span>
+            <span class="pill">Import/export behoudt bestaande indeling</span>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <div class="card toolbar">
-    <strong>Snelle simulatie</strong>
-    <label for="simSeconds">1 dag in</label>
-    <select id="simSeconds">
-      <option value="10">10 sec</option>
-      <option value="30">30 sec</option>
-      <option value="60">1 min</option>
-      <option value="120">2 min</option>
-      <option value="300">5 min</option>
-      <option value="600">10 min</option>
-    </select>
-    <button id="btnSimStart" class="primary">Start simulatie</button>
-    <span id="simState" class="small">Uit</span>
-  </div>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Testen & tijdsweergave</h2>
+          <div class="section-sub">Snelle simulatie en tijdlijnpreview staan nu bij elkaar zodat testgedrag en gekozen tijd direct samen zichtbaar zijn.</div>
+        </div>
+      </div>
+      <div class="preview-stack">
+        <div class="control-grid">
+          <div class="control-panel">
+            <div class="field">
+              <label for="simSeconds">Versnelde dagduur</label>
+              <div class="slider-row">
+                <select id="simSeconds">
+                  <option value="10">10 sec</option>
+                  <option value="30">30 sec</option>
+                  <option value="60">1 min</option>
+                  <option value="120">2 min</option>
+                  <option value="300">5 min</option>
+                  <option value="600">10 min</option>
+                </select>
+                <button id="btnSimStart" class="primary">Versnelde simulatie starten</button>
+              </div>
+            </div>
+            <span id="simState" class="small strong">Live modus</span>
+          </div>
+          <div class="control-panel">
+            <div class="field">
+              <label for="brightnessSlider">Master helderheid</label>
+              <div class="slider-row">
+                <input type="range" id="brightnessSlider" min="0" max="200" value="100" step="1">
+                <span id="brightnessVal" class="small strong" style="min-width:52px;">100%</span>
+              </div>
+            </div>
+            <div class="small">Helderheid schaalt de gecombineerde preview zonder de presetdata te wijzigen.</div>
+          </div>
+        </div>
 
-  <div class="card toolbar">
-    <strong>Tijdlijn preview</strong>
-    <input type="range" id="previewSlider" min="0" max="1439" value="0" style="flex:1;min-width:120px;">
-    <span id="previewTime" class="small" style="min-width:44px;">--:--</span>
-  </div>
+        <div class="control-panel">
+          <div class="field">
+            <label for="previewSlider">Preview tijdstip</label>
+            <div class="slider-row">
+              <input type="range" id="previewSlider" min="0" max="1439" value="0">
+              <span id="previewTime" class="small strong" style="min-width:54px;">--:--</span>
+            </div>
+          </div>
+          <div class="info-pills">
+            <span class="pill">Sleep om een tijdstip te beoordelen</span>
+            <span class="pill">Preview stopt live polling tijdelijk</span>
+          </div>
+        </div>
 
-  <div class="card toolbar">
-    <strong>Helderheid</strong>
-    <input type="range" id="brightnessSlider" min="0" max="200" value="100" step="1" style="flex:1;min-width:120px;">
-    <span id="brightnessVal" class="small" style="min-width:44px;">100%</span>
-  </div>
+        <div class="control-panel" id="resumeBar" style="display:none;">
+          <button id="btnResume" class="primary" style="flex:1;">Terug naar live dagcurve</button>
+        </div>
+      </div>
+    </section>
 
-  <div class="card toolbar" id="resumeBar" style="display:none;">
-    <button id="btnResume" class="primary" style="flex:1;">Hervat dagcurve</button>
-  </div>
-
-  <div class="layout">
-    <div class="card">
-      <div class="hint">Klik op grafiek om punt te zetten. Sleep voor finetune, rechtsklik om te verwijderen.</div>
-      <div style="font-weight:600;font-size:.85rem;margin-bottom:4px;color:#5b6f64;">Gecombineerd overzicht (na helderheidsscaling)</div>
-      <canvas id="canvasCombined" style="width:100%;height:110px;display:block;border:1px solid #d4e0d8;border-radius:8px;background:#f9fcfa;margin-bottom:10px;"></canvas>
-      <div id="channels" class="channels"></div>
+    <div class="layout">
+      <section class="card curve-shell">
+        <div class="section-head">
+          <div>
+            <h2>Curve-editor</h2>
+            <div class="section-sub">Klik om punten toe te voegen, sleep voor finetuning en gebruik rechtsklik om een punt te verwijderen.</div>
+          </div>
+        </div>
+        <div class="hint">De verticale markering volgt live tijd of previewtijd. De gecombineerde grafiek toont het resultaat na helderheidsscaling.</div>
+        <div style="font-weight:700;font-size:.86rem;margin-bottom:6px;color:var(--muted);">Gecombineerd kanaaloverzicht</div>
+        <canvas id="canvasCombined" style="width:100%;height:110px;display:block;border:1px solid #d4e0d8;border-radius:10px;background:#f9fcfa;margin-bottom:12px;"></canvas>
+        <div id="channels" class="channels"></div>
+      </section>
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h3>Live overzicht</h3>
+            <div class="section-sub">Status, output en geschat verbruik van de actieve preset.</div>
+          </div>
+        </div>
+        <div id="live" class="live-grid">laden...</div>
+      </section>
     </div>
-    <div class="card"><h3>Live info</h3><div id="live" class="live-grid">laden...</div></div>
   </div>
   <div id="versionTag" class="version-tag"></div>
 
@@ -143,6 +357,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   };
 
   const el = {
+    presetMetaName: document.getElementById("presetMetaName"),
+    presetMetaCount: document.getElementById("presetMetaCount"),
+    simStateHero: document.getElementById("simStateHero"),
+    previewHeroTime: document.getElementById("previewHeroTime"),
     presetSelect: document.getElementById("presetSelect"),
     presetName: document.getElementById("presetName"),
     btnSaveNew: document.getElementById("btnSaveNew"),
@@ -467,9 +685,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       + dailyRow;
 
     el.simSeconds.value = state.simulationDaySeconds;
-    el.simState.textContent = state.simulationActive ? "Actief" : "Uit";
+    el.simState.textContent = state.simulationActive
+      ? "Simulatie actief: 1 dag in " + state.simulationDaySeconds + " seconden"
+      : (state.previewMinute !== null ? "Preview actief op " + fmtMin(state.previewMinute) : "Live modus");
+    el.simStateHero.textContent = state.simulationActive
+      ? "Simulatie"
+      : (state.previewMinute !== null ? "Preview" : "Live");
+    el.previewHeroTime.textContent = fmtMin(displayMin);
+    el.presetMetaName.textContent = state.presets[state.activePreset]?.name || "-";
+    el.presetMetaCount.textContent = state.presets.length + " preset" + (state.presets.length === 1 ? "" : "s") + " beschikbaar";
 
-    el.btnMasterToggle.textContent = state.masterEnabled ? "● AAN" : "● UIT";
+    el.btnMasterToggle.textContent = state.masterEnabled ? "● Verlichting aan" : "● Verlichting uit";
     el.btnMasterToggle.style.background  = state.masterEnabled ? "" : "#c0392b";
     el.btnMasterToggle.style.borderColor = state.masterEnabled ? "" : "#922b21";
     el.brightnessSlider.value = state.masterBrightness;
@@ -599,7 +825,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     for (let i = 0; i < CHANNELS; i++) {
       const box = document.createElement("div");
       box.className = "ch";
-      box.innerHTML = `<div>Kanaal ${i + 1}</div><canvas></canvas>`;
+      box.innerHTML = `<div class="ch-title">Kanaal ${i + 1}</div><canvas></canvas>`;
       const c = box.querySelector("canvas");
       state.canvases.push(c);
       bindCanvas(c, i);
@@ -610,7 +836,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   function updateCurveEditLockUi() {
     if (!el.btnCurveEditLock) return;
     const unlocked = !!state.curveEditUnlocked;
-    el.btnCurveEditLock.textContent = unlocked ? "🔓 Bewerken ontgrendeld" : "🔒 Bewerken vergrendeld";
+    el.btnCurveEditLock.textContent = unlocked ? "🔓 Curve bewerken ingeschakeld" : "🔒 Curve vergrendeld";
     el.btnCurveEditLock.style.background = unlocked ? "#fff3cd" : "#fff";
     el.btnCurveEditLock.style.borderColor = unlocked ? "#d8b861" : "#b7c9bc";
     el.btnCurveEditLock.style.color = unlocked ? "#6a4f00" : "#102018";
@@ -706,7 +932,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     };
 
     el.btnSaveNew.onclick = async () => {
-      try { await savePreset(true); setStatus("Nieuw preset opgeslagen", false); }
+      try { await savePreset(true); setStatus("Nieuwe preset opgeslagen", false); }
       catch (e) { setStatus("Opslaan mislukt: " + e.message, true); }
     };
 
@@ -739,7 +965,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       state.curveEditUnlocked = !state.curveEditUnlocked;
       if (!state.curveEditUnlocked) state.dragging = null;
       updateCurveEditLockUi();
-      setStatus(state.curveEditUnlocked ? "Curve bewerken: ONTGRENDELD" : "Curve bewerken: VERGRENDELD", false);
+      setStatus(state.curveEditUnlocked ? "Curve bewerken ingeschakeld" : "Curve veilig vergrendeld", false);
     };
 
     el.btnSimStart.onclick = async () => {
@@ -747,7 +973,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         state.previewMinute = null;
         stopSimLoop();
         await setSimulation(true);
-        setStatus("Simulatie gestart", false);
+        setStatus("Versnelde simulatie gestart", false);
       } catch (e) {
         setStatus("Simulatie mislukt: " + e.message, true);
       }
