@@ -214,10 +214,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           </div>
           <div class="button-cluster">
             <button id="btnOverwrite">Preset bijwerken</button>
-            <button id="btnRename">Preset hernoemen</button>
             <button id="btnDelete" class="danger-button">Preset verwijderen</button>
           </div>
-          <div class="small">Bijwerken slaat de huidige curve op in de geselecteerde preset. Hernoemen wijzigt alleen de naam van de geselecteerde preset.</div>
+          <div class="small">Bijwerken slaat de huidige curve op en neemt ook de ingevulde naam van de actieve preset mee.</div>
         </div>
         <div class="control-panel">
           <div class="field">
@@ -376,7 +375,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     presetName: document.getElementById("presetName"),
     btnSaveNew: document.getElementById("btnSaveNew"),
     btnOverwrite: document.getElementById("btnOverwrite"),
-    btnRename: document.getElementById("btnRename"),
     btnRevert: document.getElementById("btnRevert"),
     btnDelete: document.getElementById("btnDelete"),
     btnCurveEditLock: document.getElementById("btnCurveEditLock"),
@@ -954,33 +952,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     el.btnOverwrite.onclick = async () => {
       try {
         const idx = Number(el.presetSelect.value || 0);
-        state.working.name = state.presets[idx]?.name || state.working.name;
+        const enteredName = el.activePresetName.value.trim();
+        state.working.name = enteredName || state.presets[idx]?.name || state.working.name;
+        if (!enteredName) el.activePresetName.value = state.working.name;
         await savePreset(false);
-        setStatus("Actieve preset bijgewerkt", false);
+        setStatus("Preset bijgewerkt", false);
       } catch (e) {
         setStatus("Opslaan mislukt: " + e.message, true);
-      }
-    };
-
-    el.btnRename.onclick = async () => {
-      try {
-        const idx = Number(el.presetSelect.value || 0);
-        const newName = el.activePresetName.value.trim();
-        if (!newName) {
-          setStatus("Geef eerst een naam op voor de actieve preset", true);
-          return;
-        }
-        state.working.name = newName;
-        for (let i = 0; i < CHANNELS; i++) state.working.channels[i] = sortAndClamp(state.working.channels[i]);
-        await api("/api/preset/upsert", "POST", {
-          index: idx,
-          name: newName,
-          channels: state.working.channels
-        });
-        await loadState();
-        setStatus("Preset hernoemd", false);
-      } catch (e) {
-        setStatus("Hernoemen mislukt: " + e.message, true);
       }
     };
 
