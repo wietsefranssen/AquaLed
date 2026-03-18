@@ -103,6 +103,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .field { display: grid; gap: 6px; }
     .field label { font-size: .85rem; color: var(--muted); font-weight: 600; }
     .button-cluster { display: flex; flex-wrap: wrap; gap: 8px; }
+    .button-cluster.vertical { flex-direction: column; align-items: stretch; }
     .status { font-size: .9rem; color: var(--muted); }
     .channels { display: grid; gap: 12px; }
     .ch {
@@ -168,7 +169,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <section class="card hero">
       <div>
         <h1>AquaLed Dagcurve</h1>
-        <p>Beheer presets, test tijdstippen en finetune kanaalcurves vanuit een overzichtelijke planner zonder dat de bestaande regeling verandert.</p>
+        <p>Stel lichtcurves per kanaal in, bekijk het resultaat op een gekozen tijdstip en beheer meerdere presets voor verschillende dagprofielen.</p>
         <div class="hero-actions" style="margin-top:14px;">
           <a href="/settings">⚙ Instellingen</a>
           <button id="btnMasterToggle" class="primary" style="min-width:120px;">● Verlichting aan</button>
@@ -197,31 +198,38 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <div class="section-head">
         <div>
           <h2>Presetbibliotheek</h2>
-          <div class="section-sub">Selecteer, hernoem, dupliceer of importeer presets met duidelijkere acties.</div>
+          <div class="section-sub">Kies een bestaand dagprofiel, werk het bij of maak vanuit je huidige curve snel een nieuwe preset aan.</div>
         </div>
         <span id="status" class="status">Klaar</span>
       </div>
       <div class="preset-grid">
         <div class="control-panel">
-          <div class="control-grid">
-            <div class="field">
-              <label for="presetSelect">Actieve preset</label>
-              <select id="presetSelect"></select>
-            </div>
-            <div class="field">
-              <label for="presetName">Naam voor nieuwe preset</label>
-              <input id="presetName" placeholder="Bijvoorbeeld: Ochtendrif of Avondblauw">
-            </div>
+          <div class="field">
+            <label for="presetSelect">Actieve preset</label>
+            <select id="presetSelect"></select>
+          </div>
+          <div class="field">
+            <label for="activePresetName">Naam van actieve preset</label>
+            <input id="activePresetName" placeholder="Huidige presetnaam aanpassen">
           </div>
           <div class="button-cluster">
-            <button id="btnSaveNew" class="primary">Nieuwe preset opslaan</button>
             <button id="btnOverwrite">Actieve preset bijwerken</button>
+            <button id="btnRename">Preset hernoemen</button>
+            <button id="btnRevert">Aanpassingen ongedaan maken</button>
             <button id="btnDelete" class="danger-button">Preset verwijderen</button>
           </div>
+          <div class="small">Bijwerken slaat de huidige curve op in de geselecteerde preset. Ongedaan maken laadt de opgeslagen preset opnieuw zonder iets op te slaan.</div>
         </div>
         <div class="control-panel">
           <div class="field">
-            <label>Veilige acties</label>
+            <label for="presetName">Naam voor nieuwe preset</label>
+            <input id="presetName" placeholder="Bijvoorbeeld: Ochtendrif of Avondblauw">
+          </div>
+          <div class="button-cluster vertical">
+            <button id="btnSaveNew" class="primary">Nieuwe preset opslaan</button>
+          </div>
+          <div class="field">
+            <label>Extra acties</label>
             <div class="button-cluster">
               <button id="btnCurveEditLock" class="ghost-button" title="Voorkom per ongeluk aanpassen van de curve">🔒 Curve vergrendeld</button>
               <button id="btnExport" title="Download alle presets als JSON-bestand">⬇ Presets exporteren</button>
@@ -231,7 +239,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
           </div>
           <div class="info-pills">
             <span class="pill">Tot 10 presets beschikbaar</span>
-            <span class="pill">Import/export behoudt bestaande indeling</span>
+            <span class="pill">Import/export neemt actieve selectie mee</span>
           </div>
         </div>
       </div>
@@ -241,7 +249,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <div class="section-head">
         <div>
           <h2>Testen & tijdsweergave</h2>
-          <div class="section-sub">Snelle simulatie en tijdlijnpreview staan nu bij elkaar zodat testgedrag en gekozen tijd direct samen zichtbaar zijn.</div>
+          <div class="section-sub">Speel een volledige dag versneld af of kies handmatig een tijdstip om direct te zien hoe de huidige preset eruitziet.</div>
         </div>
       </div>
       <div class="preview-stack">
@@ -362,9 +370,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     simStateHero: document.getElementById("simStateHero"),
     previewHeroTime: document.getElementById("previewHeroTime"),
     presetSelect: document.getElementById("presetSelect"),
+    activePresetName: document.getElementById("activePresetName"),
     presetName: document.getElementById("presetName"),
     btnSaveNew: document.getElementById("btnSaveNew"),
     btnOverwrite: document.getElementById("btnOverwrite"),
+    btnRename: document.getElementById("btnRename"),
+    btnRevert: document.getElementById("btnRevert"),
     btnDelete: document.getElementById("btnDelete"),
     btnCurveEditLock: document.getElementById("btnCurveEditLock"),
     status: document.getElementById("status"),
@@ -891,6 +902,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       el.presetSelect.appendChild(o);
     });
 
+    el.activePresetName.value = state.presets[state.activePreset]?.name || "";
+
     render();
   }
 
@@ -941,9 +954,40 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const idx = Number(el.presetSelect.value || 0);
         state.working.name = state.presets[idx]?.name || state.working.name;
         await savePreset(false);
-        setStatus("Preset overschreven", false);
+        setStatus("Actieve preset bijgewerkt", false);
       } catch (e) {
         setStatus("Opslaan mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnRename.onclick = async () => {
+      try {
+        const idx = Number(el.presetSelect.value || 0);
+        const newName = el.activePresetName.value.trim();
+        if (!newName) {
+          setStatus("Geef eerst een naam op voor de actieve preset", true);
+          return;
+        }
+        state.working.name = newName;
+        for (let i = 0; i < CHANNELS; i++) state.working.channels[i] = sortAndClamp(state.working.channels[i]);
+        await api("/api/preset/upsert", "POST", {
+          index: idx,
+          name: newName,
+          channels: state.working.channels
+        });
+        await loadState();
+        setStatus("Preset hernoemd", false);
+      } catch (e) {
+        setStatus("Hernoemen mislukt: " + e.message, true);
+      }
+    };
+
+    el.btnRevert.onclick = async () => {
+      try {
+        await loadState();
+        setStatus("Lokale aanpassingen ongedaan gemaakt", false);
+      } catch (e) {
+        setStatus("Ongedaan maken mislukt: " + e.message, true);
       }
     };
 
