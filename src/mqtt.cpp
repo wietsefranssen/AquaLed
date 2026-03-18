@@ -1,5 +1,6 @@
 #include <ArduinoJson.h>
 #include "mqtt.h"
+#include "cloud.h"     // resetCloudSimulationRuntime()
 #include "wifi_mgr.h"  // getMinuteOfDay(), wifiConnected()
 #include "storage.h"   // saveSchedulerData()
 
@@ -23,6 +24,12 @@ void mqttPublishState() {
                                       : String("");
     doc["nowMinute"]            = getMinuteOfDay();
     doc["masterBrightness"]     = masterBrightness;
+    doc["moonlightEnabled"]     = moonlightEnabled;
+    doc["moonlightChannel"]     = moonlightChannel;
+    doc["moonlightIntensity"]   = moonlightIntensity;
+    doc["cloudSimEnabled"]      = cloudSimEnabled;
+    doc["cloudActive"]          = cloudActiveCount() > 0;
+    doc["cloudNextInSec"]       = cloudNextInSeconds();
     JsonArray outs = doc.createNestedArray("outputs");
     for (uint8_t ch = 0; ch < LED_CHANNEL_COUNT; ++ch) outs.add(currentOutputs[ch]);
     String payload;
@@ -90,6 +97,30 @@ void mqttPublishDiscovery() {
         addDev(d);
         pub("switch", "simulation", d);
     }
+    { // Maan simulatie schakelaar
+        DynamicJsonDocument d(512);
+        d["name"]    = "AquaLed Maanlicht Simulatie";
+        d["uniq_id"] = id + "_moonlight";
+        d["stat_t"]  = base + "/state";
+        d["val_tpl"] = "{{ 'ON' if value_json.moonlightEnabled else 'OFF' }}";
+        d["cmd_t"]   = base + "/moonlight/set";
+        d["avty_t"]  = avty;
+        d["icon"]    = "mdi:moon-waxing-crescent";
+        addDev(d);
+        pub("switch", "moonlight", d);
+    }
+    { // Wolken simulatie schakelaar
+        DynamicJsonDocument d(512);
+        d["name"]    = "AquaLed Wolken Simulatie";
+        d["uniq_id"] = id + "_cloud";
+        d["stat_t"]  = base + "/state";
+        d["val_tpl"] = "{{ 'ON' if value_json.cloudSimEnabled else 'OFF' }}";
+        d["cmd_t"]   = base + "/cloud/set";
+        d["avty_t"]  = avty;
+        d["icon"]    = "mdi:weather-cloudy";
+        addDev(d);
+        pub("switch", "cloud", d);
+    }
     { // Preset selectie
         DynamicJsonDocument d(1024);
         d["name"]    = "AquaLed Preset";
@@ -131,6 +162,39 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
         mqttPublishState();
     } else if (t == base + "/simulation/set") {
         setSimulation(msg == "ON", simulationDaySeconds);
+        mqttPublishState();
+    } else if (t == base + "/moonlight/set") {
+        DynamicJsonDocument cmd(256);
+        if (!deserializeJson(cmd, msg)) {
+            if (cmd.containsKey("enabled")) {
+                moonlightEnabled = cmd["enabled"] | moonlightEnabled;
+            }
+            if (cmd.containsKey("channel")) {
+                moonlightChannel = static_cast<int8_t>(cmd["channel"].as<int>());
+            }
+            if (cmd.containsKey("intensity")) {
+                moonlightIntensity = clampValue(cmd["intensity"] | moonlightIntensity);
+            }
+        } else {
+            moonlightEnabled = (msg == "ON");
+        }
+        saveSchedulerData();
+        Serial.printf("[MQTT] moonlight→%s\n", moonlightEnabled ? "AAN" : "UIT");
+        mqttPublishState();
+    } else if (t == base + "/cloud/set") {
+        DynamicJsonDocument cmd(256);
+        if (!deserializeJson(cmd, msg)) {
+            if (cmd.containsKey("enabled")) {
+                cloudSimEnabled = cmd["enabled"] | cloudSimEnabled;
+            }
+        } else {
+            cloudSimEnabled = (msg == "ON");
+        }
+        if (cloudSimEnabled) {
+            resetCloudSimulationRuntime(false);
+        }
+        saveSchedulerData();
+        Serial.printf("[MQTT] cloud→%s\n", cloudSimEnabled ? "AAN" : "UIT");
         mqttPublishState();
     } else if (t == base + "/preset/set") {
         for (uint8_t i = 0; i < gData.presetCount; ++i) {
@@ -184,6 +248,8 @@ bool reconnectMqtt() {
         mqttClient.subscribe((base + "/preset/set").c_str());
         mqttClient.subscribe((base + "/brightness/set").c_str());
         mqttClient.subscribe((base + "/lamp/set").c_str());
+        mqttClient.subscribe((base + "/moonlight/set").c_str());
+        mqttClient.subscribe((base + "/cloud/set").c_str());
         mqttPublishDiscovery();
         mqttPublishState();
         Serial.println("[MQTT] Verbonden.");
