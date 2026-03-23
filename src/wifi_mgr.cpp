@@ -57,7 +57,6 @@ bool connectWifiStation(uint16_t retryCycles) {
         return false;
     }
 
-    WiFi.setHostname(DEVICE_HOSTNAME);
     WiFi.mode(apModeActive ? WIFI_AP_STA : WIFI_STA);
     WiFi.setSleep(false);
     WiFi.begin(gWifiConfig.ssid.c_str(), gWifiConfig.password.c_str());

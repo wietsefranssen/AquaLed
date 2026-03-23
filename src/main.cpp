@@ -161,6 +161,7 @@ void setup() {
   loadWifiConfig(gWifiConfig);
   loadMqttConfig();
 
+  WiFi.setHostname(DEVICE_HOSTNAME);
   WiFi.mode(WIFI_STA);
 
   Serial.println("[BOOT] setupWebServer");
